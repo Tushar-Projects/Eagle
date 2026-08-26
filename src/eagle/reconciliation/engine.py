@@ -1,5 +1,4 @@
 """Deterministic reconciliation engine."""
-import hashlib
 from typing import List
 
 from eagle.models.canonical import CanonicalRecord
@@ -16,17 +15,7 @@ from eagle.reconciliation.matching import (
 )
 from eagle.reconciliation.constants import ROUNDING_TOLERANCE
 from eagle.reconciliation.timing import evaluate_settlement_timing
-
-
-def _generate_relationship_id(source_ids: List[str], target_ids: List[str]) -> str:
-    """Generate a stable, deterministic relationship ID using SHA-256.
-
-    Inputs are sorted participant record IDs.
-    """
-    all_ids = sorted(source_ids + target_ids)
-    joined = "|".join(all_ids)
-    hash_hex = hashlib.sha256(joined.encode("utf-8")).hexdigest()
-    return f"REL-{hash_hex[:12]}"
+from eagle.reconciliation.utils import generate_relationship_id
 
 
 def reconcile(
@@ -118,7 +107,7 @@ def reconcile(
                     final_ex = ExceptionType.FEE_DEDUCTION
 
             res = ReconciliationResult(
-                relationship_id=_generate_relationship_id([s.record_id], [t.record_id]),
+                relationship_id=generate_relationship_id([s.record_id], [t.record_id]),
                 relationship_type=RelationshipType.ONE_TO_ONE,
                 source_record_ids=[s.record_id],
                 target_record_ids=[t.record_id],
@@ -140,7 +129,7 @@ def reconcile(
         for dup in duplicates:
             if dup in unmatched_sources:
                 res = ReconciliationResult(
-                    relationship_id=_generate_relationship_id([dup.record_id], []),
+                    relationship_id=generate_relationship_id([dup.record_id], []),
                     relationship_type=RelationshipType.ONE_TO_ONE,
                     source_record_ids=[dup.record_id],
                     target_record_ids=[],
@@ -166,9 +155,6 @@ def reconcile(
     _run_1_to_1_stage(is_stage4_fee_match, is_stage_4=True)
 
     # --- Stage 5: Aggregation Match (1:N) ---
-    print("UNMATCHED TARGETS BEFORE STAGE 5:")
-    for t in unmatched_targets:
-        print(f"{t.record_id} - {t.amount} - {t.settlement_date}")
     for s in list(unmatched_sources):
         t_subset, is_rounding, is_fee, is_shortfall = find_1_to_n_match(s, unmatched_targets)
         if t_subset:
@@ -190,7 +176,7 @@ def reconcile(
                     final_ex = ExceptionType.FEE_DEDUCTION
 
             res = ReconciliationResult(
-                relationship_id=_generate_relationship_id([s.record_id], [t.record_id for t in t_subset]),
+                relationship_id=generate_relationship_id([s.record_id], [t.record_id for t in t_subset]),
                 relationship_type=RelationshipType.ONE_TO_MANY,
                 source_record_ids=[s.record_id],
                 target_record_ids=[t.record_id for t in t_subset],
@@ -225,7 +211,7 @@ def reconcile(
                     final_ex = ExceptionType.FEE_DEDUCTION
 
             res = ReconciliationResult(
-                relationship_id=_generate_relationship_id([s.record_id for s in s_subset], [t.record_id]),
+                relationship_id=generate_relationship_id([s.record_id for s in s_subset], [t.record_id]),
                 relationship_type=RelationshipType.MANY_TO_ONE,
                 source_record_ids=[s.record_id for s in s_subset],
                 target_record_ids=[t.record_id],
@@ -262,7 +248,7 @@ def reconcile(
     # --- POST: Deterministic MISSING_RECORD Resolution ---
     for s in unmatched_sources:
         res = ReconciliationResult(
-            relationship_id=_generate_relationship_id([s.record_id], []),
+            relationship_id=generate_relationship_id([s.record_id], []),
             relationship_type=RelationshipType.ONE_TO_ONE,
             source_record_ids=[s.record_id],
             target_record_ids=[],
@@ -276,7 +262,7 @@ def reconcile(
 
     for t in unmatched_targets:
         res = ReconciliationResult(
-            relationship_id=_generate_relationship_id([], [t.record_id]),
+            relationship_id=generate_relationship_id([], [t.record_id]),
             relationship_type=RelationshipType.ONE_TO_ONE,
             source_record_ids=[],
             target_record_ids=[t.record_id],

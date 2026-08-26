@@ -5,11 +5,18 @@ class Settings(BaseSettings):
     DATABASE_PATH: str = "sqlite:///./eagle.db"
     CHROMADB_PATH: str = "./chroma_data"
 
-    # AI Provider / Model Configuration
-    MODEL_PROVIDER: str = "openai"
-    MODEL_BASE_URL: str = "https://api.openai.com/v1"
-    MODEL_API_KEY: str = ""
-    MODEL_NAME: str = "gpt-4o"
+    # AI Provider — Generic Selection
+    AI_PROVIDER: str = "mock"       # "gemini", "claude", "mock"
+    AI_MODEL: str = ""              # Provider-specific model name
+
+    # Provider-Specific Credentials
+    GEMINI_API_KEY: str = ""
+    CLAUDE_API_KEY: str = ""
+
+    # Classifier Configuration
+    AI_MAX_RETRIES: int = 2
+    AI_TIMEOUT_SECONDS: int = 30
+    AI_MAX_CONCURRENCY: int = 5     # Bounded parallelism for async
 
     model_config = SettingsConfigDict(
         env_file=".env",
