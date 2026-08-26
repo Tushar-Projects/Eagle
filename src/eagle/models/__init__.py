@@ -10,11 +10,14 @@ from eagle.models.enums import (
     RelationshipType,
     Severity,
 )
+from eagle.models.evidence import CandidateRelationshipEvidence, EngineOutput
 from eagle.models.ground_truth import GroundTruthDataset, GroundTruthRelationship
 from eagle.models.reconciliation import ReconciliationResult
 
 __all__ = [
+    "CandidateRelationshipEvidence",
     "CanonicalRecord",
+    "EngineOutput",
     "ExceptionType",
     "GroundTruthDataset",
     "GroundTruthRelationship",
