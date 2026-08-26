@@ -1,0 +1,534 @@
+{
+  "relationships": [
+    {
+      "relationship_id": "R-A01",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A01"
+      ],
+      "target_record_ids": [
+        "BANK-A01"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "5000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A02",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A02"
+      ],
+      "target_record_ids": [
+        "BANK-A02"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "-1500.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A03",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A03"
+      ],
+      "target_record_ids": [
+        "BANK-A03"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "2000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A04",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A04"
+      ],
+      "target_record_ids": [
+        "BANK-A04"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "2100.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A05",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A05"
+      ],
+      "target_record_ids": [
+        "BANK-A05"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "3450.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A06",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A06"
+      ],
+      "target_record_ids": [
+        "BANK-A06"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "4400.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A07",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A07"
+      ],
+      "target_record_ids": [
+        "BANK-A07"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "5000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-A08",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-A08"
+      ],
+      "target_record_ids": [
+        "BANK-A08"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "150000.50",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B01",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B01"
+      ],
+      "target_record_ids": [
+        "BANK-B01"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "ROUNDING_DIFFERENCE",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B02",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B02"
+      ],
+      "target_record_ids": [
+        "BANK-B02"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "ROUNDING_DIFFERENCE",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B03",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B03"
+      ],
+      "target_record_ids": [
+        "BANK-B03"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "FEE_DEDUCTION",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B04",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B04"
+      ],
+      "target_record_ids": [
+        "BANK-B04"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "FEE_DEDUCTION",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B05",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B05"
+      ],
+      "target_record_ids": [
+        "BANK-B05"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B06",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B06"
+      ],
+      "target_record_ids": [
+        "BANK-B06"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B07",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B07"
+      ],
+      "target_record_ids": [
+        "BANK-B07"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "SETTLEMENT_DELAY",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-B08",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-B08"
+      ],
+      "target_record_ids": [
+        "BANK-B08"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "SETTLEMENT_DELAY",
+      "expected_reconciled_amount": "12000.00",
+      "notes": "10-day delay; HIGH severity; flag_for_review=true"
+    },
+    {
+      "relationship_id": "R-C01",
+      "relationship_type": "1:N",
+      "source_record_ids": [
+        "GTW-C01"
+      ],
+      "target_record_ids": [
+        "BANK-C01-1",
+        "BANK-C01-2"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-C02",
+      "relationship_type": "1:N",
+      "source_record_ids": [
+        "GTW-C02"
+      ],
+      "target_record_ids": [
+        "BANK-C02-1",
+        "BANK-C02-2",
+        "BANK-C02-3"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-C03",
+      "relationship_type": "N:1",
+      "source_record_ids": [
+        "GTW-C03-1",
+        "GTW-C03-2"
+      ],
+      "target_record_ids": [
+        "BANK-C03"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-C04",
+      "relationship_type": "N:1",
+      "source_record_ids": [
+        "GTW-C04-1",
+        "GTW-C04-2",
+        "GTW-C04-3"
+      ],
+      "target_record_ids": [
+        "BANK-C04"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-C05",
+      "relationship_type": "1:N",
+      "source_record_ids": [
+        "GTW-C05"
+      ],
+      "target_record_ids": [
+        "BANK-C05-1",
+        "BANK-C05-2"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "ROUNDING_DIFFERENCE",
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-C06",
+      "relationship_type": "N:1",
+      "source_record_ids": [
+        "GTW-C06-1",
+        "GTW-C06-2"
+      ],
+      "target_record_ids": [
+        "BANK-C06"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": "FEE_DEDUCTION",
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D01",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D01"
+      ],
+      "target_record_ids": [],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "MISSING_RECORD",
+      "expected_reconciled_amount": "0.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D02",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D02"
+      ],
+      "target_record_ids": [],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "MISSING_RECORD",
+      "expected_reconciled_amount": "0.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D03",
+      "relationship_type": "1:1",
+      "source_record_ids": [],
+      "target_record_ids": [
+        "BANK-ORPH-001"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "MISSING_RECORD",
+      "expected_reconciled_amount": "0.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D04",
+      "relationship_type": "1:1",
+      "source_record_ids": [],
+      "target_record_ids": [
+        "BANK-D04"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "MISSING_RECORD",
+      "expected_reconciled_amount": "0.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D05",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D05"
+      ],
+      "target_record_ids": [
+        "BANK-D05"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "CURRENCY_MISMATCH",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D06",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D06"
+      ],
+      "target_record_ids": [
+        "BANK-D06"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "PARTIAL_SETTLEMENT",
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D07",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D07"
+      ],
+      "target_record_ids": [],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "DUPLICATE",
+      "expected_reconciled_amount": "5000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D08",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D08"
+      ],
+      "target_record_ids": [],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "POSSIBLE_DUPLICATE",
+      "expected_reconciled_amount": "5000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-D09",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-D09"
+      ],
+      "target_record_ids": [
+        "BANK-D09"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "UNKNOWN",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E01",
+      "relationship_type": "1:N",
+      "source_record_ids": [
+        "GTW-E01"
+      ],
+      "target_record_ids": [
+        "BANK-E01-1",
+        "BANK-E01-2"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "15000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E02a",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-E02a"
+      ],
+      "target_record_ids": [
+        "BANK-E02a"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E02b",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-E02b"
+      ],
+      "target_record_ids": [
+        "BANK-E02b"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "10001.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E03",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-E03"
+      ],
+      "target_record_ids": [
+        "BANK-E03"
+      ],
+      "expected_outcome": "MATCHED",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "5000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E04",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-E04"
+      ],
+      "target_record_ids": [
+        "BANK-E04"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": null,
+      "expected_reconciled_amount": "1000.00",
+      "notes": "Validation exception: settlement_date precedes transaction_date."
+    },
+    {
+      "relationship_id": "R-E05",
+      "relationship_type": "1:1",
+      "source_record_ids": [
+        "GTW-E05"
+      ],
+      "target_record_ids": [
+        "BANK-E05"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "UNKNOWN",
+      "expected_reconciled_amount": "1000.00",
+      "notes": ""
+    },
+    {
+      "relationship_id": "R-E06",
+      "relationship_type": "1:N",
+      "source_record_ids": [
+        "GTW-E06"
+      ],
+      "target_record_ids": [
+        "BANK-E06-1",
+        "BANK-E06-2"
+      ],
+      "expected_outcome": "EXCEPTION",
+      "expected_exception_type": "SPLIT_SETTLEMENT",
+      "expected_reconciled_amount": "10000.00",
+      "notes": ""
+    }
+  ]
+}
