@@ -7,5 +7,5 @@ app = FastAPI(title="Eagle AI Finance Controller")
 def health_check():
     return {
         "status": "ok",
-        "provider": settings.MODEL_PROVIDER
+        "provider": settings.AI_PROVIDER
     }
