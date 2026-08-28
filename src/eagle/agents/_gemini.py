@@ -65,7 +65,7 @@ RULES:
 - You MUST use only these relationship types: 1:1, 1:N, N:1.
 - You MUST use only these exception types: SETTLEMENT_DELAY, FEE_DEDUCTION, ROUNDING_DIFFERENCE, PARTIAL_SETTLEMENT, SPLIT_SETTLEMENT, DUPLICATE, MISSING_RECORD, CURRENCY_MISMATCH, POSSIBLE_DUPLICATE, UNKNOWN.
 - You MUST NOT override deterministic financial facts (amounts, currencies, dates).
-- For CANDIDATE_SELECTION: select exactly one target, or select none if evidence is insufficient.
+- For CANDIDATE_SELECTION: You are selecting among deterministic candidate options. Return the zero-based index of exactly one candidate option. Do not construct participant IDs. Do not combine records from different options.
 - Output valid JSON conforming to the provided schema."""
 
 
@@ -85,15 +85,14 @@ def _build_exception_evidence(case: ClassificationCase) -> str:
 
 
 def _build_candidate_evidence(case: ClassificationCase) -> str:
-    lines = [f"CASE TYPE: {case.case_type}", "", "SOURCE RECORDS:"]
-    for i, sid in enumerate(case.source_record_ids):
-        lines.append(f"- ID: {sid}, Amount: {case.source_amounts[i]} {case.source_currencies[i]}, Date: {case.source_transaction_dates[i]}")
-    lines.append("")
-    lines.append("CANDIDATE TARGET RECORDS:")
-    for i, tid in enumerate(case.candidate_target_record_ids):
-        lines.append(f"- ID: {tid}, Amount: {case.target_amounts[i]} {case.target_currencies[i]}, Settlement: {case.target_settlement_dates[i]}")
+    lines = [f"CASE TYPE: {case.case_type}", "", "CANDIDATE OPTIONS:"]
+    if case.candidate_options:
+        for idx, opt in enumerate(case.candidate_options):
+            lines.append(f"Option {idx}:")
+            lines.append(f"  Source IDs: {opt.source_record_ids}")
+            lines.append(f"  Target IDs: {opt.target_record_ids}")
     lines.append("")
     lines.append(f"EVIDENCE: {case.evidence_summary}")
     lines.append("")
-    lines.append('Output JSON: {"selected_target_record_ids": [...], "relationship_type": "...", "outcome": "...", "exception_type": "...", "severity": "...", "flag_for_review": true/false, "reconciled_amount": "...", "reasoning": "...", "confidence": 0.0-1.0}')
+    lines.append('Output JSON: {"selected_candidate_index": 0, "relationship_type": "...", "outcome": "...", "exception_type": "...", "severity": "...", "flag_for_review": true/false, "reconciled_amount": "...", "reasoning": "...", "confidence": 0.0-1.0}')
     return "\n".join(lines)

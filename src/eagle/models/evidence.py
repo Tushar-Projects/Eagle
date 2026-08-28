@@ -10,18 +10,21 @@ from pydantic import BaseModel
 from eagle.models.reconciliation import ReconciliationResult
 
 
+class CandidateRelationshipOption(BaseModel):
+    """An exact, deterministic alternative for a candidate relationship."""
+    source_record_ids: list[str]
+    target_record_ids: list[str]
+
 class CandidateRelationshipEvidence(BaseModel):
     """An unresolved candidate pool of evidence.
 
     This represents plausible candidates (e.g., a single source and multiple 
     compatible targets) where the deterministic engine lacks sufficient evidence 
     to commit to a final structural relationship or select a specific counterpart.
-
-    Note: `candidate_target_record_ids` are PLAUSIBLE CANDIDATES, not confirmed targets.
+    
+    The AI must select exactly one complete deterministic option from candidate_options.
     """
-
-    source_record_ids: list[str]
-    candidate_target_record_ids: list[str]
+    candidate_options: list[CandidateRelationshipOption]
     relationship_context: str
     amount_evidence: str = ""
     date_evidence: str = ""

@@ -52,6 +52,13 @@ def create_provider(config) -> LLMProvider:
                 model=config.AI_MODEL,
                 timeout=config.AI_TIMEOUT_SECONDS,
             )
+        case "llama_server":
+            from eagle.agents._llama_server import LlamaServerProvider
+            return LlamaServerProvider(
+                base_url=config.LLAMA_SERVER_URL,
+                model=config.AI_MODEL,
+                timeout=config.AI_TIMEOUT_SECONDS,
+            )
         case "mock":
             from eagle.agents._mock import MockProvider
             return MockProvider()

@@ -6,8 +6,9 @@ class Settings(BaseSettings):
     CHROMADB_PATH: str = "./chroma_data"
 
     # AI Provider — Generic Selection
-    AI_PROVIDER: str = "mock"       # "gemini", "claude", "mock"
+    AI_PROVIDER: str = "mock"       # "gemini", "claude", "llama_server", "mock"
     AI_MODEL: str = ""              # Provider-specific model name
+    LLAMA_SERVER_URL: str = "http://127.0.0.1:8000"
 
     # Provider-Specific Credentials
     GEMINI_API_KEY: str = ""

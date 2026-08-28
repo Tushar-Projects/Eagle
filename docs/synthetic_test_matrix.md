@@ -32,14 +32,14 @@ distractor records.
 
 ## 3. Coverage Categories
 
-| Category | Relationships | Records (approx.) | % of relationships |
-|---|---|---|---|
-| **A** — Clean deterministic matches | 8 | 16 | 21% |
-| **B** — Legitimate matched classifications | 8 | 16 | 21% |
-| **C** — Relationship complexity (1:N, N:1) | 6 | 20 | 16% |
-| **D** — Missing / exception cases | 9 | 12 | 24% |
-| **E** — Adversarial / ambiguous cases | 7 | 15 | 18% |
-| **Total** | **38** | **79** | |
+| Category                                   | Relationships | Records (approx.) | % of relationships |
+| --------------------------------------------| ---------------| -------------------| --------------------|
+| **A** — Clean deterministic matches        | 8             | 16                | 21%                |
+| **B** — Legitimate matched classifications | 8             | 16                | 21%                |
+| **C** — Relationship complexity (1:N, N:1) | 6             | 20                | 16%                |
+| **D** — Missing / exception cases          | 9             | 12                | 24%                |
+| **E** — Adversarial / ambiguous cases      | 7             | 15                | 18%                |
+| **Total**                                  | **38**        | **79**            |                    |
 
 Categories overlap by design.  For example, a 1:N adversarial split
 (E-01) exercises both relationship complexity and adversarial matching.
