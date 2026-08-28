@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from eagle.models.reconciliation import ReconciliationResult
+from eagle.models.evidence import CandidateRelationshipOption
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,9 @@ class ClassificationCase(BaseModel):
     # Identity — who is involved
     source_record_ids: list[str]
     committed_target_record_ids: list[str]      # For EXCEPTION_CLASSIFICATION
-    candidate_target_record_ids: list[str]       # For CANDIDATE_SELECTION
+    
+    # Candidate options for CANDIDATE_SELECTION
+    candidate_options: list['CandidateRelationshipOption'] | None = None
 
     # Committed topology (only for EXCEPTION_CLASSIFICATION)
     committed_relationship_type: str | None = None
@@ -72,12 +75,11 @@ class ExceptionClassificationDecision(BaseModel):
 class CandidateSelectionDecision(BaseModel):
     """AI decision for resolving an ambiguous candidate pool.
 
-    selected_target_record_ids must be a subset of the
-    candidate_target_record_ids supplied in ClassificationCase.
-    An empty list means the AI found no valid counterpart.
+    selected_candidate_index specifies the 0-based index of the chosen option 
+    from candidate_options. None means the AI found no valid counterpart.
     """
 
-    selected_target_record_ids: list[str]
+    selected_candidate_index: int | None
     relationship_type: str
     outcome: str
     exception_type: str | None
@@ -97,7 +99,6 @@ class FailedClassification(BaseModel):
     """Records an AI classification failure for audit/review."""
 
     source_record_ids: list[str]
-    candidate_target_record_ids: list[str]
     case_type: str
     failure_reason: str
     attempts: int

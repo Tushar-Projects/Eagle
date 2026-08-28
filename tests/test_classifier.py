@@ -24,7 +24,7 @@ from eagle.models.enums import (
     RelationshipType,
     Severity,
 )
-from eagle.models.evidence import CandidateRelationshipEvidence, EngineOutput
+from eagle.models.evidence import CandidateRelationshipEvidence, CandidateRelationshipOption, EngineOutput
 from eagle.models.reconciliation import ReconciliationResult
 from eagle.reconciliation.utils import generate_relationship_id
 
@@ -157,26 +157,29 @@ def test_exception_fabricated_source_id_rejected():
     src = _make_record("GTW-X")
     tgt1 = _make_record("BANK-Y", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-1"], target_record_ids=["BANK-1"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-1"], target_record_ids=["BANK-2"])
+    ]
+    
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-X"],
-        candidate_target_record_ids=["BANK-Y"],
+        candidate_options=options,
         relationship_context="Test",
     )
+    
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=2, # out of bounds
+        relationship_type="1:1",
+        outcome="EXCEPTION",
+        exception_type=None,
+        severity=None,
+        flag_for_review=False,
+        reconciled_amount="5000.00",
+        reasoning="test",
+        confidence=0.9,
+    )
 
-    def handler(case):
-        return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-FABRICATED"],  # Fabricated!
-            relationship_type="1:1",
-            outcome="MATCHED",
-            exception_type=None,
-            severity=None,
-            flag_for_review=False,
-            reconciled_amount="5000.00",
-            reasoning="test",
-            confidence=0.9,
-        )
-
-    provider = MockProvider(candidate_handler=handler)
+    provider = MockProvider(candidate_handler=lambda c: decision)
     classifier = AIExceptionClassifier(provider=provider, max_retries=0)
     engine_output = EngineOutput(results=[], candidates=[evidence])
 
@@ -197,15 +200,18 @@ def test_exception_fabricated_target_id_rejected():
     src = _make_record("GTW-X")
     tgt1 = _make_record("BANK-Y", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-1"], target_record_ids=["BANK-1"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-X"],
-        candidate_target_record_ids=["BANK-Y"],
+        candidate_options=options,
         relationship_context="Test",
     )
 
     def handler(case):
+        # Index 99 is invalid/not in pool
         return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-Z"],  # Not in candidates!
+            selected_candidate_index=99,
             relationship_type="1:1",
             outcome="MATCHED",
             exception_type=None,
@@ -237,15 +243,18 @@ def test_candidate_ids_restricted_to_evidence():
     tgt1 = _make_record("BANK-E03", source="BANK")
     tgt2 = _make_record("BANK-D03", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-E03"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-D03"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-E03"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
+        candidate_options=options,
         relationship_context="Ambiguous pool",
     )
 
     def handler(case):
         return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-E03"],  # Valid selection
+            selected_candidate_index=0,
             relationship_type="1:1",
             outcome="MATCHED",
             exception_type=None,
@@ -279,26 +288,26 @@ def test_candidate_1n_not_fabricated_from_1_1_pool():
     tgt1 = _make_record("BANK-E03", source="BANK")
     tgt2 = _make_record("BANK-D03", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-1", "GTW-2"], target_record_ids=["BANK-1", "BANK-2"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-E03"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
-        relationship_context="Ambiguous pool",
+        candidate_options=options,
+        relationship_context="Test",
+    )
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=0,
+        relationship_type="1:1",  # Invalid for N:M
+        outcome="MATCHED",
+        exception_type=None,
+        severity=None,
+        flag_for_review=False,
+        reconciled_amount="5000.00",
+        reasoning="test",
+        confidence=0.9,
     )
 
-    def handler(case):
-        return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-E03", "BANK-D03"],  # Both!
-            relationship_type="1:1",  # Can't be 1:1 with two targets
-            outcome="MATCHED",
-            exception_type=None,
-            severity=None,
-            flag_for_review=False,
-            reconciled_amount="5000.00",
-            reasoning="test",
-            confidence=0.9,
-        )
-
-    provider = MockProvider(candidate_handler=handler)
+    provider = MockProvider(candidate_handler=lambda c: decision)
     classifier = AIExceptionClassifier(provider=provider, max_retries=0)
     engine_output = EngineOutput(results=[], candidates=[evidence])
 
@@ -320,26 +329,26 @@ def test_n_to_m_rejected():
     tgt1 = _make_record("BANK-Y1", source="BANK")
     tgt2 = _make_record("BANK-Y2", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-1", "GTW-2"], target_record_ids=["BANK-1", "BANK-2"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-X1", "GTW-X2"],
-        candidate_target_record_ids=["BANK-Y1", "BANK-Y2"],
+        candidate_options=options,
         relationship_context="Test",
     )
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=0,
+        relationship_type="1:N",  # Invalid for N:M
+        outcome="MATCHED",
+        exception_type=None,
+        severity=None,
+        flag_for_review=False,
+        reconciled_amount="5000.00",
+        reasoning="test",
+        confidence=0.9,
+    )
 
-    def handler(case):
-        return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-Y1", "BANK-Y2"],
-            relationship_type="1:N",  # Invalid for N:M
-            outcome="MATCHED",
-            exception_type=None,
-            severity=None,
-            flag_for_review=False,
-            reconciled_amount="5000.00",
-            reasoning="test",
-            confidence=0.9,
-        )
-
-    provider = MockProvider(candidate_handler=handler)
+    provider = MockProvider(candidate_handler=lambda c: decision)
     classifier = AIExceptionClassifier(provider=provider, max_retries=0)
     engine_output = EngineOutput(results=[], candidates=[evidence])
 
@@ -400,26 +409,28 @@ def test_invalid_reconciled_amount_rejected():
     src = _make_record("GTW-X", amount="5000.00")
     tgt = _make_record("BANK-Y", source="BANK")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-X"], target_record_ids=["BANK-Y"])
+    ]
+    
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-X"],
-        candidate_target_record_ids=["BANK-Y"],
+        candidate_options=options,
         relationship_context="Test",
     )
+    
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=0,
+        relationship_type="1:1",
+        outcome="MATCHED",
+        exception_type=None,
+        severity=None,
+        flag_for_review=False,
+        reconciled_amount="9999.99",  # Wrong amount!
+        reasoning="test",
+        confidence=0.9,
+    )
 
-    def handler(case):
-        return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-Y"],
-            relationship_type="1:1",
-            outcome="MATCHED",
-            exception_type=None,
-            severity=None,
-            flag_for_review=False,
-            reconciled_amount="9999.99",  # Wrong amount!
-            reasoning="test",
-            confidence=0.9,
-        )
-
-    provider = MockProvider(candidate_handler=handler)
+    provider = MockProvider(candidate_handler=lambda c: decision)
     classifier = AIExceptionClassifier(provider=provider, max_retries=0)
     engine_output = EngineOutput(results=[], candidates=[evidence])
 
@@ -441,14 +452,13 @@ def test_relationship_id_deterministic():
     tgt = _make_record("BANK-E03", source="BANK")
 
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-E03"],
-        candidate_target_record_ids=["BANK-E03"],
+        candidate_options=[CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-E03"])],
         relationship_context="Test",
     )
 
     def handler(case):
         return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-E03"],
+            selected_candidate_index=0,
             relationship_type="1:1",
             outcome="MATCHED",
             exception_type=None,
@@ -664,26 +674,28 @@ def test_d08_possible_duplicate():
     tgt1 = _make_record("BANK-E03", source="BANK")
     tgt2 = _make_record("BANK-D03", source="BANK", stl_date="2025-01-18")
 
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-D08"], target_record_ids=["BANK-E08-1"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-D08"], target_record_ids=["BANK-E08-2"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-D08"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
-        relationship_context="Ambiguous pool",
+        candidate_options=options,
+        relationship_context="Ambiguous pool"
+    )
+    
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=None, # Indicates POSSIBLE_DUPLICATE / unresolved
+        relationship_type="1:1",
+        outcome="EXCEPTION",
+        exception_type="POSSIBLE_DUPLICATE",
+        severity="MEDIUM",
+        flag_for_review=True,
+        reconciled_amount="5000.00",
+        reasoning="Near-duplicate of another gateway record",
+        confidence=0.7,
     )
 
-    def handler(case):
-        return CandidateSelectionDecision(
-            selected_target_record_ids=[],  # No valid counterpart
-            relationship_type="1:1",
-            outcome="EXCEPTION",
-            exception_type="POSSIBLE_DUPLICATE",
-            severity="MEDIUM",
-            flag_for_review=True,
-            reconciled_amount="5000.00",
-            reasoning="Near-duplicate of another gateway record",
-            confidence=0.7,
-        )
-
-    provider = MockProvider(candidate_handler=handler)
+    provider = MockProvider(candidate_handler=lambda c: decision)
     classifier = AIExceptionClassifier(provider=provider)
     engine_output = EngineOutput(results=[], candidates=[evidence])
 
@@ -708,16 +720,18 @@ def test_e03_candidate_selection():
     src = _make_record("GTW-E03")
     tgt1 = _make_record("BANK-E03", source="BANK")
     tgt2 = _make_record("BANK-D03", source="BANK", stl_date="2025-01-18")
-
+    options = [
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-E03"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-D03"])
+    ]
     evidence = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-E03"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
+        candidate_options=options,
         relationship_context="Ambiguous pool",
     )
 
     def handler(case):
         return CandidateSelectionDecision(
-            selected_target_record_ids=["BANK-E03"],
+            selected_candidate_index=0,
             relationship_type="1:1",
             outcome="MATCHED",
             exception_type=None,
@@ -727,7 +741,6 @@ def test_e03_candidate_selection():
             reasoning="BANK-E03 has closer settlement date",
             confidence=0.85,
         )
-
     provider = MockProvider(candidate_handler=handler)
     classifier = AIExceptionClassifier(provider=provider)
     engine_output = EngineOutput(results=[], candidates=[evidence])
@@ -888,14 +901,21 @@ def test_candidate_evidence_non_consuming():
     tgt1 = _make_record("BANK-E03", source="BANK")
     tgt2 = _make_record("BANK-D03", source="BANK", stl_date="2025-01-18")
 
+    options_e03 = [
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-E03"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-D03"])
+    ]
     evidence_e03 = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-E03"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
+        candidate_options=options_e03,
         relationship_context="Ambiguous pool",
     )
+    
+    options_d08 = [
+        CandidateRelationshipOption(source_record_ids=["GTW-D08"], target_record_ids=["BANK-E03"]),
+        CandidateRelationshipOption(source_record_ids=["GTW-D08"], target_record_ids=["BANK-D03"])
+    ]
     evidence_d08 = CandidateRelationshipEvidence(
-        source_record_ids=["GTW-D08"],
-        candidate_target_record_ids=["BANK-E03", "BANK-D03"],
+        candidate_options=options_d08,
         relationship_context="Ambiguous pool",
     )
 
@@ -905,19 +925,19 @@ def test_candidate_evidence_non_consuming():
         cases_received.append(case)
         if case.source_record_ids == ["GTW-E03"]:
             return CandidateSelectionDecision(
-                selected_target_record_ids=["BANK-E03"],
+                selected_candidate_index=0,
                 relationship_type="1:1",
                 outcome="MATCHED",
                 exception_type=None,
                 severity=None,
                 flag_for_review=False,
                 reconciled_amount="5000.00",
-                reasoning="E-03 selects BANK-E03",
-                confidence=0.8,
+                reasoning="test",
+                confidence=0.9,
             )
         else:
             return CandidateSelectionDecision(
-                selected_target_record_ids=[],
+                selected_candidate_index=None,
                 relationship_type="1:1",
                 outcome="EXCEPTION",
                 exception_type="POSSIBLE_DUPLICATE",
@@ -949,7 +969,7 @@ def test_candidate_evidence_non_consuming():
 
     for case in cases_received:
         # Both cases should have both candidates available
-        assert set(case.candidate_target_record_ids) == {"BANK-E03", "BANK-D03"}
+        assert set(t for opt in case.candidate_options for t in opt.target_record_ids) == {"BANK-E03", "BANK-D03"}
 
     # Verify results
     e03_result = next(r for r in output.classified_results if r.source_record_ids == ["GTW-E03"])
@@ -960,3 +980,457 @@ def test_candidate_evidence_non_consuming():
 
     assert d08_result.target_record_ids == []
     assert d08_result.exception_type == ExceptionType.POSSIBLE_DUPLICATE
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for Global Commit Validation & Safety Boundaries
+# ---------------------------------------------------------------------------
+
+
+def test_independent_groups_can_both_resolve():
+    """Verify that two disjoint candidate groups can both resolve and commit independent relationships."""
+    src1 = _make_record("GTW-S1", amount="5000.00")
+    src2 = _make_record("GTW-S2", amount="6000.00")
+    tgt1 = _make_record("BANK-T1", amount="5000.00", source="BANK")
+    tgt2 = _make_record("BANK-T2", amount="6000.00", source="BANK")
+
+    ev1 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1"], target_record_ids=["BANK-T1"]),
+        ],
+        relationship_context="Group 1",
+    )
+    ev2 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S2"], target_record_ids=["BANK-T2"]),
+        ],
+        relationship_context="Group 2",
+    )
+
+    def handler(case):
+        amt = "5000.00" if case.source_record_ids == ["GTW-S1"] else "6000.00"
+        return CandidateSelectionDecision(
+            selected_candidate_index=0,
+            relationship_type="1:1",
+            outcome="MATCHED",
+            exception_type=None,
+            severity=None,
+            flag_for_review=False,
+            reconciled_amount=amt,
+            reasoning="Valid match",
+            confidence=0.9,
+        )
+
+    provider = MockProvider(candidate_handler=handler)
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev1, ev2])
+
+    output = classifier.classify_all_sync(engine_output, [src1, src2], [tgt1, tgt2])
+
+    assert len(output.classified_results) == 2
+    assert len(output.failed_cases) == 0
+    committed_srcs = {r.source_record_ids[0] for r in output.classified_results}
+    assert committed_srcs == {"GTW-S1", "GTW-S2"}
+
+
+def test_global_collision_rejects_conflicting_selections():
+    """Verify that if two independent AI selections claim the same target, the collision is rejected."""
+    src1 = _make_record("GTW-S1", amount="5000.00")
+    src2 = _make_record("GTW-S2", amount="5000.00")
+    tgt_shared = _make_record("BANK-SHARED", amount="5000.00", source="BANK")
+
+    ev1 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1"], target_record_ids=["BANK-SHARED"]),
+        ],
+        relationship_context="Group 1",
+    )
+    ev2 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S2"], target_record_ids=["BANK-SHARED"]),
+        ],
+        relationship_context="Group 2",
+    )
+
+    def handler(case):
+        return CandidateSelectionDecision(
+            selected_candidate_index=0,
+            relationship_type="1:1",
+            outcome="MATCHED",
+            exception_type=None,
+            severity=None,
+            flag_for_review=False,
+            reconciled_amount="5000.00",
+            reasoning="Valid match",
+            confidence=0.9,
+        )
+
+    provider = MockProvider(candidate_handler=handler)
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev1, ev2])
+
+    output = classifier.classify_all_sync(engine_output, [src1, src2], [tgt_shared])
+
+    # First decision commits BANK-SHARED; second decision collides and is rejected
+    assert len(output.classified_results) == 1
+    assert len(output.failed_cases) == 1
+    assert output.classified_results[0].source_record_ids == ["GTW-S1"]
+    assert "Global participant collision" in output.failed_cases[0].failure_reason
+    assert "BANK-SHARED" in output.failed_cases[0].failure_reason
+
+
+def test_global_validation_is_deterministic():
+    """Verify global validation produces identical results regardless of execution timing."""
+    src1 = _make_record("GTW-S1", amount="5000.00")
+    src2 = _make_record("GTW-S2", amount="5000.00")
+    tgt_shared = _make_record("BANK-SHARED", amount="5000.00", source="BANK")
+
+    ev1 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1"], target_record_ids=["BANK-SHARED"]),
+        ],
+        relationship_context="Group 1",
+    )
+    ev2 = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S2"], target_record_ids=["BANK-SHARED"]),
+        ],
+        relationship_context="Group 2",
+    )
+
+    def handler(case):
+        return CandidateSelectionDecision(
+            selected_candidate_index=0,
+            relationship_type="1:1",
+            outcome="MATCHED",
+            exception_type=None,
+            severity=None,
+            flag_for_review=False,
+            reconciled_amount="5000.00",
+            reasoning="Valid match",
+            confidence=0.9,
+        )
+
+    provider = MockProvider(candidate_handler=handler)
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev1, ev2])
+
+    run1 = classifier.classify_all_sync(engine_output, [src1, src2], [tgt_shared])
+    run2 = classifier.classify_all_sync(engine_output, [src1, src2], [tgt_shared])
+
+    assert len(run1.classified_results) == len(run2.classified_results)
+    assert run1.classified_results[0].relationship_id == run2.classified_results[0].relationship_id
+    assert len(run1.failed_cases) == len(run2.failed_cases)
+
+
+def test_invalid_candidate_index_rejected():
+    """Verify that an out-of-bounds selected_candidate_index is rejected as a safety violation."""
+    src = _make_record("GTW-S1", amount="5000.00")
+    tgt = _make_record("BANK-T1", amount="5000.00", source="BANK")
+
+    ev = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1"], target_record_ids=["BANK-T1"]),
+        ],
+        relationship_context="Group 1",
+    )
+
+    def handler(case):
+        return CandidateSelectionDecision(
+            selected_candidate_index=99,  # Out of bounds!
+            relationship_type="1:1",
+            outcome="MATCHED",
+            exception_type=None,
+            severity=None,
+            flag_for_review=False,
+            reconciled_amount="5000.00",
+            reasoning="Bad index",
+            confidence=0.9,
+        )
+
+    provider = MockProvider(candidate_handler=handler)
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev])
+
+    output = classifier.classify_all_sync(engine_output, [src], [tgt])
+
+    assert len(output.classified_results) == 0
+    assert len(output.failed_cases) == 1
+    assert "Candidate index out of bounds" in output.failed_cases[0].failure_reason
+
+
+def test_ai_cannot_fabricate_participant_ids():
+    """Verify that participant IDs are exclusively derived from the deterministic option and cannot be fabricated."""
+    src = _make_record("GTW-S1", amount="5000.00")
+    tgt = _make_record("BANK-T1", amount="5000.00", source="BANK")
+
+    ev = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1"], target_record_ids=["BANK-T1"]),
+        ],
+        relationship_context="Group 1",
+    )
+
+    # Even if an AI decision object tried to suggest other IDs, application logic
+    # looks up evidence.candidate_options[selected_candidate_index]
+    decision = CandidateSelectionDecision(
+        selected_candidate_index=0,
+        relationship_type="1:1",
+        outcome="MATCHED",
+        exception_type=None,
+        severity=None,
+        flag_for_review=False,
+        reconciled_amount="5000.00",
+        reasoning="Valid index",
+        confidence=0.9,
+    )
+
+    case = ClassificationCase(
+        case_type="CANDIDATE_SELECTION",
+        source_record_ids=["GTW-S1"],
+        committed_target_record_ids=[],
+        candidate_options=ev.candidate_options,
+        source_amounts=[Decimal("5000.00")],
+        source_currencies=["INR"],
+        target_amounts=[Decimal("5000.00")],
+        target_currencies=["INR"],
+        source_transaction_dates=["2025-01-15"],
+        target_settlement_dates=["2025-01-17"],
+        evidence_summary="test",
+    )
+
+    result = AIExceptionClassifier._validate_candidate_decision(decision, case, ev)
+    # Must strictly match the deterministic option
+    assert result.source_record_ids == ["GTW-S1"]
+    assert result.target_record_ids == ["BANK-T1"]
+
+
+def test_amount_hallucination_rejected():
+    """Verify that an AI amount hallucination (e.g. 7000.00 vs 10000.00) is rejected as a safety violation."""
+    src1 = _make_record("GTW-S1", amount="3000.00")
+    src2 = _make_record("GTW-S2", amount="7000.00")
+    tgt = _make_record("BANK-T1", amount="10000.00", source="BANK")
+
+    ev = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-S1", "GTW-S2"], target_record_ids=["BANK-T1"]),
+        ],
+        relationship_context="N:1 Group",
+    )
+
+    def handler(case):
+        return CandidateSelectionDecision(
+            selected_candidate_index=0,
+            relationship_type="N:1",
+            outcome="MATCHED",
+            exception_type=None,
+            severity=None,
+            flag_for_review=False,
+            reconciled_amount="7000.00",  # Hallucinated 7000.00 instead of 10000.00!
+            reasoning="Mistake",
+            confidence=0.9,
+        )
+
+    provider = MockProvider(candidate_handler=handler)
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev])
+
+    output = classifier.classify_all_sync(engine_output, [src1, src2], [tgt])
+
+    assert len(output.classified_results) == 0
+    assert len(output.failed_cases) == 1
+    assert "Reconciled amount 7000.00 does not match source amount 10000.00" in output.failed_cases[0].failure_reason
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for MockProvider Abstention & Generic Selection Behavior
+# ---------------------------------------------------------------------------
+
+
+def test_mock_provider_positive_heuristic_match():
+    """Verify that a positive heuristic match selects the matching candidate option."""
+    provider = MockProvider()
+    case = ClassificationCase(
+        case_type="CANDIDATE_SELECTION",
+        source_record_ids=["GTW-C01"],
+        committed_target_record_ids=[],
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-C01"], target_record_ids=["BANK-C01-1", "BANK-C01-2"]),
+            CandidateRelationshipOption(source_record_ids=["GTW-C01"], target_record_ids=["BANK-OTHER-1", "BANK-OTHER-2"]),
+        ],
+        source_amounts=[Decimal("10000.00")],
+        source_currencies=["INR"],
+        target_amounts=[Decimal("6000.00"), Decimal("4000.00")],
+        target_currencies=["INR", "INR"],
+        source_transaction_dates=["2025-01-15"],
+        target_settlement_dates=["2025-01-16", "2025-01-16"],
+        evidence_summary="Test C01 match",
+    )
+    decision = _run_sync(provider.select_candidate(case))
+    assert decision.selected_candidate_index == 0
+    assert decision.outcome == "MATCHED"
+    assert decision.relationship_type == "1:N"
+    assert decision.reconciled_amount == "10000.00"
+
+
+def test_mock_provider_multiple_options_selects_exact_match():
+    """Verify that among multiple candidate options, the exact heuristic match is chosen."""
+    provider = MockProvider()
+    case = ClassificationCase(
+        case_type="CANDIDATE_SELECTION",
+        source_record_ids=["GTW-E03"],
+        committed_target_record_ids=[],
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-D03-DEC"]),
+            CandidateRelationshipOption(source_record_ids=["GTW-E03"], target_record_ids=["BANK-E03-TRG"]),
+        ],
+        source_amounts=[Decimal("5000.00")],
+        source_currencies=["INR"],
+        target_amounts=[Decimal("5000.00"), Decimal("5000.00")],
+        target_currencies=["INR", "INR"],
+        source_transaction_dates=["2025-01-15"],
+        target_settlement_dates=["2025-01-17", "2025-01-18"],
+        evidence_summary="Test E03 match",
+    )
+    decision = _run_sync(provider.select_candidate(case))
+    assert decision.selected_candidate_index == 1
+    assert decision.outcome == "MATCHED"
+    assert decision.relationship_type == "1:1"
+    assert decision.reconciled_amount == "5000.00"
+
+
+def test_mock_provider_abstains_when_no_heuristic_match():
+    """Verify that when no candidate option satisfies the heuristic, MockProvider abstains rather than selecting option 0."""
+    provider = MockProvider()
+    case = ClassificationCase(
+        case_type="CANDIDATE_SELECTION",
+        source_record_ids=["SRC-839201"],
+        committed_target_record_ids=[],
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["SRC-839201"], target_record_ids=["TARGET-441"]),
+            CandidateRelationshipOption(source_record_ids=["SRC-839201"], target_record_ids=["TARGET-992"]),
+        ],
+        source_amounts=[Decimal("7500.00")],
+        source_currencies=["INR"],
+        target_amounts=[Decimal("7500.00"), Decimal("7500.00")],
+        target_currencies=["INR", "INR"],
+        source_transaction_dates=["2025-02-10"],
+        target_settlement_dates=["2025-02-12", "2025-02-13"],
+        evidence_summary="Arbitrary non-matching IDs",
+    )
+    decision = _run_sync(provider.select_candidate(case))
+    # Must NOT blindly select option 0
+    assert decision.selected_candidate_index is None
+    assert decision.outcome == "EXCEPTION"
+    assert decision.exception_type == "POSSIBLE_DUPLICATE"
+    assert decision.severity == "MEDIUM"
+    assert decision.flag_for_review is True
+    assert decision.reconciled_amount == "7500.00"
+
+
+def test_mock_provider_abstention_end_to_end_in_classifier():
+    """Verify end-to-end classifier handling of MockProvider abstention on arbitrary IDs."""
+    src = _make_record("SRC-839201", amount="7500.00")
+    tgt1 = _make_record("TARGET-441", amount="7500.00", source="BANK")
+    tgt2 = _make_record("TARGET-992", amount="7500.00", source="BANK")
+
+    ev = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["SRC-839201"], target_record_ids=["TARGET-441"]),
+            CandidateRelationshipOption(source_record_ids=["SRC-839201"], target_record_ids=["TARGET-992"]),
+        ],
+        relationship_context="Arbitrary pool",
+    )
+
+    provider = MockProvider()  # Default mode
+    classifier = AIExceptionClassifier(provider=provider)
+    engine_output = EngineOutput(results=[], candidates=[ev])
+
+    output = classifier.classify_all_sync(engine_output, [src], [tgt1, tgt2])
+
+    assert len(output.classified_results) == 1
+    assert len(output.failed_cases) == 0
+
+    res = output.classified_results[0]
+    assert res.source_record_ids == ["SRC-839201"]
+    assert res.target_record_ids == []
+    assert res.outcome == ReconciliationOutcome.EXCEPTION
+    assert res.exception_type == ExceptionType.POSSIBLE_DUPLICATE
+    assert res.reconciled_amount == Decimal("7500.00")
+
+
+# ---------------------------------------------------------------------------
+# Enriched Candidate Metadata Tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_candidate_case_serializes_source_and_target_metadata():
+    """Verify that _build_candidate_case captures all available metadata for sources and targets."""
+    src = CanonicalRecord(
+        record_id="SRC-CUSTOM-1",
+        transaction_id="TXN-SRC-001",
+        source="GATEWAY",
+        source_reference="REF-SRC-999",
+        amount=Decimal("10000.00"),
+        currency="INR",
+        transaction_date=datetime.date(2025, 2, 1),
+        settlement_date=datetime.date(2025, 2, 1),
+        counterparty="Merchant Alpha",
+        status="SUCCESS",
+        transaction_type="PAYMENT",
+    )
+    tgt1 = CanonicalRecord(
+        record_id="TGT-CUSTOM-A",
+        transaction_id="TXN-TGT-001",
+        source="BANK",
+        source_reference="REF-TGT-A",
+        amount=Decimal("6000.00"),
+        currency="INR",
+        transaction_date=datetime.date(2025, 2, 3),
+        settlement_date=datetime.date(2025, 2, 3),
+        counterparty="Bank Processor",
+        status="SUCCESS",
+        transaction_type="CREDIT",
+    )
+    tgt2 = CanonicalRecord(
+        record_id="TGT-CUSTOM-B",
+        transaction_id="TXN-TGT-002",
+        source="BANK",
+        source_reference="REF-TGT-B",
+        amount=Decimal("4000.00"),
+        currency="INR",
+        transaction_date=datetime.date(2025, 2, 3),
+        settlement_date=datetime.date(2025, 2, 3),
+        counterparty="Bank Processor",
+        status="SUCCESS",
+        transaction_type="CREDIT",
+    )
+
+    ev = CandidateRelationshipEvidence(
+        candidate_options=[
+            CandidateRelationshipOption(source_record_ids=["SRC-CUSTOM-1"], target_record_ids=["TGT-CUSTOM-A", "TGT-CUSTOM-B"]),
+        ],
+        relationship_context="Custom 1:N pool",
+    )
+
+    source_lookup = {"SRC-CUSTOM-1": src}
+    target_lookup = {"TGT-CUSTOM-A": tgt1, "TGT-CUSTOM-B": tgt2}
+
+    case = AIExceptionClassifier._build_candidate_case(ev, source_lookup, target_lookup)
+
+    assert "SRC-CUSTOM-1" in case.evidence_summary
+    assert "10000.00 INR" in case.evidence_summary
+    assert "REF-SRC-999" in case.evidence_summary
+    assert "Merchant Alpha" in case.evidence_summary
+    assert "TGT-CUSTOM-A" in case.evidence_summary
+    assert "6000.00 INR" in case.evidence_summary
+    assert "REF-TGT-A" in case.evidence_summary
+    assert "TGT-CUSTOM-B" in case.evidence_summary
+    assert "4000.00 INR" in case.evidence_summary
+    assert "REF-TGT-B" in case.evidence_summary
+    assert len(case.candidate_options) == 1
+    assert case.candidate_options[0].source_record_ids == ["SRC-CUSTOM-1"]
+    assert case.candidate_options[0].target_record_ids == ["TGT-CUSTOM-A", "TGT-CUSTOM-B"]
+
+
+

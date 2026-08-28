@@ -65,28 +65,65 @@ class AIExceptionClassifier:
         source_lookup = {r.record_id: r for r in source_records}
         target_lookup = {r.record_id: r for r in target_records}
 
-        tasks = []
-
         # 1. Exception Classification for committed results with exception_type=None
+        exception_tasks = []
         for result in engine_output.results:
             if result.outcome == ReconciliationOutcome.EXCEPTION and result.exception_type is None:
                 # Filter out validation exceptions (E-04: settlement < transaction)
                 if self._is_validation_exception(result, source_lookup, target_lookup):
                     continue
-                tasks.append(self._classify_exception(result, source_lookup, target_lookup))
+                exception_tasks.append(self._classify_exception(result, source_lookup, target_lookup))
 
-        # 2. Candidate Selection for unresolved candidate pools
-        for candidate in engine_output.candidates:
-            tasks.append(self._select_candidate(candidate, source_lookup, target_lookup))
-
-        task_results = await asyncio.gather(*tasks)
+        exception_results = await asyncio.gather(*exception_tasks) if exception_tasks else []
 
         classified_results: List[ReconciliationResult] = []
         failed_cases: List[FailedClassification] = []
 
-        for item in task_results:
+        for item in exception_results:
             if isinstance(item, ReconciliationResult):
                 classified_results.append(item)
+            elif isinstance(item, FailedClassification):
+                failed_cases.append(item)
+
+        # 2. Candidate Selection for unresolved candidate pools
+        candidate_tasks = []
+        for candidate in engine_output.candidates:
+            candidate_tasks.append(self._select_candidate(candidate, source_lookup, target_lookup))
+
+        candidate_results = await asyncio.gather(*candidate_tasks) if candidate_tasks else []
+
+        # 3. Global Commit Validation
+        # Initialize globally committed sets from deterministic results
+        globally_committed_sources = {sid for r in engine_output.results for sid in r.source_record_ids}
+        globally_committed_targets = {tid for r in engine_output.results for tid in r.target_record_ids}
+
+        # Process candidate selection results in deterministic order
+        for item in candidate_results:
+            if isinstance(item, ReconciliationResult):
+                # Check for global collision
+                source_conflicts = set(item.source_record_ids) & globally_committed_sources
+                target_conflicts = set(item.target_record_ids) & globally_committed_targets
+
+                if source_conflicts or target_conflicts:
+                    conflicts = sorted(list(source_conflicts | target_conflicts))
+                    logger.warning(
+                        "Global participant collision on records %s for relationship %s",
+                        conflicts, item.relationship_id
+                    )
+                    failed_cases.append(
+                        FailedClassification(
+                            source_record_ids=item.source_record_ids,
+                            candidate_target_record_ids=item.target_record_ids,
+                            case_type="CANDIDATE_SELECTION",
+                            failure_reason=f"Global participant collision on record(s): {conflicts}",
+                            attempts=1,
+                        )
+                    )
+                else:
+                    # Validated globally: commit and reserve participants
+                    globally_committed_sources.update(item.source_record_ids)
+                    globally_committed_targets.update(item.target_record_ids)
+                    classified_results.append(item)
             elif isinstance(item, FailedClassification):
                 failed_cases.append(item)
 
@@ -213,6 +250,13 @@ class AIExceptionClassifier:
     ) -> ReconciliationResult | FailedClassification:
         """Resolve an ambiguous candidate pool."""
         case = self._build_candidate_case(evidence, source_lookup, target_lookup)
+        
+        anchor_id = "unknown"
+        if evidence.candidate_options:
+            if len(evidence.candidate_options[0].source_record_ids) == 1:
+                anchor_id = evidence.candidate_options[0].source_record_ids[0]
+            else:
+                anchor_id = evidence.candidate_options[0].target_record_ids[0]
 
         for attempt in range(1, self._max_retries + 2):
             async with self._semaphore:
@@ -222,32 +266,35 @@ class AIExceptionClassifier:
                     return validated
                 except _SafetyViolation as e:
                     logger.warning(
-                        "Safety violation for %s: %s", evidence.source_record_ids, e
+                        "Safety violation for candidate decision (anchor=%s, attempt=%d): %s", 
+                        anchor_id,
+                        attempt,
+                        e
                     )
                     return FailedClassification(
-                        source_record_ids=evidence.source_record_ids,
-                        candidate_target_record_ids=evidence.candidate_target_record_ids,
+                        source_record_ids=sorted(list({sid for opt in evidence.candidate_options for sid in opt.source_record_ids})),
+                        candidate_target_record_ids=sorted(list({tid for opt in evidence.candidate_options for tid in opt.target_record_ids})),
                         case_type="CANDIDATE_SELECTION",
                         failure_reason=f"Safety violation: {e}",
                         attempts=attempt,
                     )
                 except Exception as e:
                     logger.warning(
-                        "Attempt %d failed for %s: %s",
-                        attempt, evidence.source_record_ids, e,
+                        "Attempt %d failed for candidate (anchor=%s): %s",
+                        attempt, anchor_id, e
                     )
                     if attempt > self._max_retries:
                         return FailedClassification(
-                            source_record_ids=evidence.source_record_ids,
-                            candidate_target_record_ids=evidence.candidate_target_record_ids,
+                            source_record_ids=sorted(list({sid for opt in evidence.candidate_options for sid in opt.source_record_ids})),
+                            candidate_target_record_ids=sorted(list({tid for opt in evidence.candidate_options for tid in opt.target_record_ids})),
                             case_type="CANDIDATE_SELECTION",
                             failure_reason=str(e),
                             attempts=attempt,
                         )
 
         return FailedClassification(
-            source_record_ids=evidence.source_record_ids,
-            candidate_target_record_ids=evidence.candidate_target_record_ids,
+            source_record_ids=sorted(list({sid for opt in evidence.candidate_options for sid in opt.source_record_ids})),
+            candidate_target_record_ids=sorted(list({tid for opt in evidence.candidate_options for tid in opt.target_record_ids})),
             case_type="CANDIDATE_SELECTION",
             failure_reason="Max retries exhausted",
             attempts=self._max_retries + 1,
@@ -302,15 +349,66 @@ class AIExceptionClassifier:
         source_lookup: dict[str, CanonicalRecord],
         target_lookup: dict[str, CanonicalRecord],
     ) -> ClassificationCase:
-        """Build a ClassificationCase for candidate selection."""
-        src_records = [source_lookup[sid] for sid in evidence.source_record_ids if sid in source_lookup]
-        tgt_records = [target_lookup[tid] for tid in evidence.candidate_target_record_ids if tid in target_lookup]
+        """Build a ClassificationCase for candidate selection with enriched metadata."""
+        all_src_ids = sorted(list({sid for opt in evidence.candidate_options for sid in opt.source_record_ids}))
+        all_tgt_ids = sorted(list({tid for opt in evidence.candidate_options for tid in opt.target_record_ids}))
+
+        src_records = [source_lookup[sid] for sid in all_src_ids if sid in source_lookup]
+        tgt_records = [target_lookup[tid] for tid in all_tgt_ids if tid in target_lookup]
+
+        # Build enriched metadata sections
+        meta_lines = [
+            f"EVIDENCE CONTEXT: {evidence.relationship_context}",
+            "",
+            "SOURCE RECORDS:",
+        ]
+        for r in src_records:
+            meta_lines.append(f"- ID: {r.record_id}")
+            meta_lines.append(f"  Amount: {r.amount} {r.currency}")
+            meta_lines.append(f"  Transaction Date: {r.transaction_date}")
+            meta_lines.append(f"  Settlement Date: {r.settlement_date}")
+            if r.source_reference:
+                meta_lines.append(f"  Reference: {r.source_reference}")
+            if r.counterparty:
+                meta_lines.append(f"  Counterparty: {r.counterparty}")
+            if r.transaction_id and r.transaction_id != r.record_id:
+                meta_lines.append(f"  Transaction ID: {r.transaction_id}")
+            if r.fee_amount is not None:
+                meta_lines.append(f"  Fee Amount: {r.fee_amount}")
+            if r.gross_amount is not None:
+                meta_lines.append(f"  Gross Amount: {r.gross_amount}")
+            if r.net_amount is not None:
+                meta_lines.append(f"  Net Amount: {r.net_amount}")
+            meta_lines.append(f"  Type: {r.transaction_type}")
+            meta_lines.append(f"  Status: {r.status}")
+
+        meta_lines.append("")
+        meta_lines.append("TARGET RECORDS:")
+        for r in tgt_records:
+            meta_lines.append(f"- ID: {r.record_id}")
+            meta_lines.append(f"  Amount: {r.amount} {r.currency}")
+            meta_lines.append(f"  Transaction Date: {r.transaction_date}")
+            meta_lines.append(f"  Settlement Date: {r.settlement_date}")
+            if r.source_reference:
+                meta_lines.append(f"  Reference: {r.source_reference}")
+            if r.counterparty:
+                meta_lines.append(f"  Counterparty: {r.counterparty}")
+            if r.transaction_id and r.transaction_id != r.record_id:
+                meta_lines.append(f"  Transaction ID: {r.transaction_id}")
+            if r.fee_amount is not None:
+                meta_lines.append(f"  Fee Amount: {r.fee_amount}")
+            if r.gross_amount is not None:
+                meta_lines.append(f"  Gross Amount: {r.gross_amount}")
+            if r.net_amount is not None:
+                meta_lines.append(f"  Net Amount: {r.net_amount}")
+            meta_lines.append(f"  Type: {r.transaction_type}")
+            meta_lines.append(f"  Status: {r.status}")
 
         return ClassificationCase(
             case_type="CANDIDATE_SELECTION",
-            source_record_ids=evidence.source_record_ids,
+            source_record_ids=all_src_ids,
             committed_target_record_ids=[],
-            candidate_target_record_ids=evidence.candidate_target_record_ids,
+            candidate_options=evidence.candidate_options,
             committed_relationship_type=None,
             source_amounts=[r.amount for r in src_records],
             source_currencies=[r.currency for r in src_records],
@@ -318,7 +416,7 @@ class AIExceptionClassifier:
             target_currencies=[r.currency for r in tgt_records],
             source_transaction_dates=[str(r.transaction_date) for r in src_records],
             target_settlement_dates=[str(r.settlement_date) for r in tgt_records],
-            evidence_summary=evidence.relationship_context,
+            evidence_summary="\n".join(meta_lines),
         )
 
     # ------------------------------------------------------------------
@@ -380,14 +478,18 @@ class AIExceptionClassifier:
         - reconciled amount must equal source amount
         - no hallucinated IDs
         """
-        # 1. Validate selected target IDs are subset of candidates
-        allowed_targets = set(case.candidate_target_record_ids)
-        selected = set(decision.selected_target_record_ids)
-        if not selected.issubset(allowed_targets):
-            fabricated = selected - allowed_targets
-            raise _SafetyViolation(
-                f"AI fabricated target IDs: {fabricated}"
-            )
+        # 1. Validate candidate index bounds
+        idx = decision.selected_candidate_index
+        if idx is None:
+            source_ids = sorted(list({sid for opt in evidence.candidate_options for sid in opt.source_record_ids}))
+            target_ids = []
+        else:
+            if not (0 <= idx < len(evidence.candidate_options)):
+                raise _SafetyViolation(f"Candidate index out of bounds: {idx}")
+                
+            selected_option = evidence.candidate_options[idx]
+            source_ids = list(selected_option.source_record_ids)
+            target_ids = list(selected_option.target_record_ids)
 
         # 2. Validate enum values
         try:
@@ -418,9 +520,7 @@ class AIExceptionClassifier:
             except ValueError:
                 raise _SafetyViolation(f"Invalid severity: {decision.severity}")
 
-        # 3. Validate no N:M
-        source_ids = list(evidence.source_record_ids)
-        target_ids = list(decision.selected_target_record_ids)
+        # 3. Validate no N:M (Should be structurally impossible now but keep safety check)
         if len(source_ids) > 1 and len(target_ids) > 1:
             raise _SafetyViolation("N:M relationship not allowed")
 
@@ -432,13 +532,18 @@ class AIExceptionClassifier:
                 f"Invalid reconciled_amount: {decision.reconciled_amount}"
             )
 
-        # reconciled_amount must equal source amount
-        if case.source_amounts:
-            expected_amount = case.source_amounts[0]
-            if reconciled_amount != expected_amount:
+        # 4. Validate amount (if MATCHED)
+        if decision.outcome == "MATCHED":
+            selected_source_amounts = []
+            for sid in source_ids:
+                if sid in case.source_record_ids:
+                    sidx = case.source_record_ids.index(sid)
+                    selected_source_amounts.append(case.source_amounts[sidx])
+            total_source_amount = sum(Decimal(str(amt)) for amt in selected_source_amounts)
+            if reconciled_amount != total_source_amount:
                 raise _SafetyViolation(
                     f"Reconciled amount {reconciled_amount} does not match "
-                    f"source amount {expected_amount}"
+                    f"source amount {total_source_amount}"
                 )
 
         # 5. Validate topology consistency
@@ -457,6 +562,11 @@ class AIExceptionClassifier:
             if relationship_type != RelationshipType.ONE_TO_MANY:
                 raise _SafetyViolation(
                     f"Single source + multiple targets must use 1:N, got {relationship_type.value}"
+                )
+        elif len(target_ids) == 1 and len(source_ids) > 1:
+            if relationship_type != RelationshipType.MANY_TO_ONE:
+                raise _SafetyViolation(
+                    f"Multiple sources + single target must use N:1, got {relationship_type.value}"
                 )
 
         # 6. Generate relationship ID deterministically
