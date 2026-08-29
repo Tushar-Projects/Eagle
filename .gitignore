@@ -1,3 +1,40 @@
+# Virtual Environments
 .venv/
+env/
+venv/
+ENV/
+
+# Environment Variables
 .env
-.pytest_cache
+.env.local
+.env.*.local
+
+# Databases & Runtime State
+*.db
+*.sqlite
+*.sqlite3
+chroma_data/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Artifacts
+.DS_Store
+Thumbs.db

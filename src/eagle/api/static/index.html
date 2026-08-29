@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eagle — AI Financial Reconciliation Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app" class="app-layout">
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-badge">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span class="brand-title">EAGLE</span>
+          <span class="brand-subtitle">AI Reconciliation Controller</span>
+        </div>
+        <div class="engine-status" id="engineStatus">
+          <span class="status-dot pulsing"></span>
+          <span class="status-text" id="engineProviderLabel">Engine: Connecting...</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="run-selector-container">
+          <label for="runSelect" class="selector-label">Run History:</label>
+          <select id="runSelect" class="run-dropdown" title="Select Historical Run">
+            <option value="">Loading historical runs...</option>
+          </select>
+          <button id="btnRefreshRuns" class="btn-icon" title="Refresh runs">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M23 4v6h-6M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+
+        <button id="btnOpenUpload" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          New Reconciliation
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="app-main">
+      <!-- Active Run Header / State Bar -->
+      <section class="active-run-bar" id="activeRunBar">
+        <div class="run-meta-left">
+          <h2 class="run-title" id="displayRunId">No Run Selected</h2>
+          <span class="run-status-badge badge-neutral" id="displayRunStatus">IDLE</span>
+          <span class="run-timestamp" id="displayRunTimestamp">--</span>
+        </div>
+        <div class="run-meta-right">
+          <button id="btnExportCsv" class="btn btn-outline" disabled>
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export CSV
+          </button>
+          <button id="btnExportJson" class="btn btn-outline" disabled>
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export JSON
+          </button>
+        </div>
+      </section>
+
+      <!-- KPI Summary Cards Grid -->
+      <section class="kpi-grid" id="kpiGrid">
+        <div class="kpi-card">
+          <div class="kpi-label">TOTAL INGESTED</div>
+          <div class="kpi-value" id="kpiTotalRecords">0</div>
+          <div class="kpi-subtext" id="kpiRecordSplit">0 Gateway / 0 Bank</div>
+        </div>
+
+        <div class="kpi-card kpi-highlight-green">
+          <div class="kpi-label">MATCHED VOLUME</div>
+          <div class="kpi-value" id="kpiMatchedCount">0</div>
+          <div class="kpi-subtext" id="kpiMatchRate">0.0% Match Rate</div>
+        </div>
+
+        <div class="kpi-card kpi-highlight-amber">
+          <div class="kpi-label">EXCEPTIONS</div>
+          <div class="kpi-value" id="kpiExceptionCount">0</div>
+          <div class="kpi-subtext" id="kpiExceptionRate">0.0% Exception Rate</div>
+        </div>
+
+        <div class="kpi-card kpi-highlight-red">
+          <div class="kpi-label">MISSING / ORPHANS</div>
+          <div class="kpi-value" id="kpiMissingCount">0</div>
+          <div class="kpi-subtext">Unmatched transactions</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">UNRESOLVED POOLS</div>
+          <div class="kpi-value" id="kpiUnresolvedCount">0</div>
+          <div class="kpi-subtext">AI Ambiguities</div>
+        </div>
+
+        <div class="kpi-card kpi-card-total">
+          <div class="kpi-label">RECONCILED AMOUNT</div>
+          <div class="kpi-value kpi-amount" id="kpiReconciledAmount">₹0.00</div>
+          <div class="kpi-subtext">Total Verified Volume</div>
+        </div>
+      </section>
+
+      <!-- Navigation Tabs -->
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="tab-results">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          All Results (<span id="countAllResults">0</span>)
+        </button>
+        <button class="tab-btn" data-tab="tab-exceptions">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          Exceptions & Review (<span id="countExceptions">0</span>)
+        </button>
+        <button class="tab-btn" data-tab="tab-candidates">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          AI Candidate Inspector (<span id="countCandidates">0</span>)
+        </button>
+        <button class="tab-btn" data-tab="tab-audit">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Audit Trail (<span id="countAuditLogs">0</span>)
+        </button>
+      </nav>
+
+      <!-- Tab 1: All Results View -->
+      <section class="tab-pane active" id="tab-results">
+        <div class="pane-controls">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="filterSearch" placeholder="Search relationship ID, participant IDs, or amounts...">
+          </div>
+
+          <div class="filter-group">
+            <select id="filterOutcome" class="select-filter">
+              <option value="">All Outcomes</option>
+              <option value="MATCHED">MATCHED</option>
+              <option value="EXCEPTION">EXCEPTION</option>
+            </select>
+
+            <select id="filterType" class="select-filter">
+              <option value="">All Topologies</option>
+              <option value="1:1">1:1</option>
+              <option value="1:N">1:N</option>
+              <option value="N:1">N:1</option>
+            </select>
+
+            <select id="filterReview" class="select-filter">
+              <option value="">All Review Flags</option>
+              <option value="true">Flagged for Review</option>
+              <option value="false">Unflagged</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="resultsTable">
+            <thead>
+              <tr>
+                <th>Relationship ID</th>
+                <th>Topology</th>
+                <th>Gateway Participants (Source)</th>
+                <th>Bank Participants (Target)</th>
+                <th>Outcome</th>
+                <th>Classification</th>
+                <th>Amount</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="resultsTableBody">
+              <tr>
+                <td colspan="8" class="table-empty">No reconciliation data loaded. Select or trigger a run.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 2: Exceptions View -->
+      <section class="tab-pane" id="tab-exceptions">
+        <div class="pane-controls">
+          <div class="filter-group">
+            <select id="filterExceptionSeverity" class="select-filter">
+              <option value="">All Severities</option>
+              <option value="HIGH">HIGH Severity</option>
+              <option value="MEDIUM">MEDIUM Severity</option>
+              <option value="LOW">LOW Severity</option>
+            </select>
+
+            <select id="filterExceptionType" class="select-filter">
+              <option value="">All Exception Types</option>
+              <option value="ROUNDING_DIFFERENCE">Rounding Difference</option>
+              <option value="FEE_DEDUCTION">Fee Deduction</option>
+              <option value="SETTLEMENT_DELAY">Settlement Delay</option>
+              <option value="DUPLICATE">Duplicate</option>
+              <option value="POSSIBLE_DUPLICATE">Possible Duplicate</option>
+              <option value="CURRENCY_MISMATCH">Currency Mismatch</option>
+              <option value="MISSING_RECORD">Missing Record (Orphan)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="exceptionsTable">
+            <thead>
+              <tr>
+                <th>Relationship ID</th>
+                <th>Source Records</th>
+                <th>Target Records</th>
+                <th>Exception Classification</th>
+                <th>Severity</th>
+                <th>Reconciled Amount</th>
+                <th>Action Required</th>
+              </tr>
+            </thead>
+            <tbody id="exceptionsTableBody">
+              <tr>
+                <td colspan="7" class="table-empty">No exceptions in this run.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 3: Candidate Inspector View -->
+      <section class="tab-pane" id="tab-candidates">
+        <div class="info-banner">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <div>
+            <strong>Architecture Invariant:</strong> The deterministic aggregation engine constructs the exhaustive legal search space.
+            The AI model selects an option index from that search space, and the Global Commit Validator validates and commits the selection without participant collisions.
+          </div>
+        </div>
+
+        <div class="candidate-cards-container" id="candidateCardsContainer">
+          <div class="empty-state">No candidate pools recorded for this run.</div>
+        </div>
+      </section>
+
+      <!-- Tab 4: Audit Trail Timeline -->
+      <section class="tab-pane" id="tab-audit">
+        <div class="timeline-container" id="auditTimelineContainer">
+          <div class="empty-state">No audit events found.</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay hidden" id="uploadModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 class="modal-title">New Reconciliation Run</h3>
+          <button class="modal-close" id="btnCloseUploadModal">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <p class="modal-intro">Upload Gateway and Bank CSV settlement batches to execute end-to-end reconciliation.</p>
+
+          <div class="quick-demo-box">
+            <span>Need sample data?</span>
+            <button type="button" class="btn btn-sm btn-secondary" id="btnQuickLoadSynthetic">
+              ⚡ Quick-Load Synthetic Sample Data (40 GTW / 41 Bank)
+            </button>
+          </div>
+
+          <form id="uploadForm" class="upload-form">
+            <!-- Gateway File Dropzone -->
+            <div class="dropzone-group">
+              <label class="dropzone-label">Gateway Transactions File (.csv)</label>
+              <div class="dropzone" id="dropzoneGateway">
+                <input type="file" id="fileGateway" accept=".csv" class="file-input">
+                <div class="dropzone-content">
+                  <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="1.5" fill="none">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                  </svg>
+                  <span class="dropzone-text" id="textGateway">Drag & drop Gateway CSV or <span class="link-text">Browse</span></span>
+                  <span class="file-info" id="infoGateway"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bank File Dropzone -->
+            <div class="dropzone-group">
+              <label class="dropzone-label">Bank Settlement File (.csv)</label>
+              <div class="dropzone" id="dropzoneBank">
+                <input type="file" id="fileBank" accept=".csv" class="file-input">
+                <div class="dropzone-content">
+                  <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="1.5" fill="none">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                  </svg>
+                  <span class="dropzone-text" id="textBank">Drag & drop Bank CSV or <span class="link-text">Browse</span></span>
+                  <span class="file-info" id="infoBank"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="upload-progress-container hidden" id="uploadProgressContainer">
+              <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="uploadProgressBar"></div>
+              </div>
+              <div class="progress-status-text" id="uploadProgressText">Processing...</div>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline" id="btnCancelUpload">Cancel</button>
+              <button type="submit" class="btn btn-primary" id="btnSubmitReconciliation">
+                Start Reconciliation
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
