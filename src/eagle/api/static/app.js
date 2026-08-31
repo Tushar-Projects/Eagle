@@ -208,7 +208,12 @@ function renderKpis() {
   document.getElementById('kpiRecordSplit').textContent = `${m.source_count || 0} Gateway / ${m.target_count || 0} Bank`;
   
   document.getElementById('kpiMatchedCount').textContent = m.matched_count || 0;
-  document.getElementById('kpiMatchRate').textContent = `${(m.match_rate || 0).toFixed(1)}% Match Rate`;
+  document.getElementById('kpiMatchRate').textContent = `${(m.match_rate || 0).toFixed(1)}% Record Match`;
+
+  const valEl = document.getElementById('kpiValueMatchRate');
+  if (valEl) {
+    valEl.textContent = `${(m.value_weighted_match_rate || 0).toFixed(1)}%`;
+  }
 
   document.getElementById('kpiExceptionCount').textContent = m.exception_count || 0;
   document.getElementById('kpiExceptionRate').textContent = `${(m.exception_rate || 0).toFixed(1)}% Exceptions`;

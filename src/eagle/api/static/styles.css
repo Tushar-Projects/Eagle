@@ -347,6 +347,8 @@ body {
 }
 
 .kpi-highlight-green .kpi-value { color: var(--accent-emerald); }
+.kpi-highlight-cyan .kpi-value { color: var(--accent-cyan); }
+.kpi-highlight-blue .kpi-value { color: var(--accent-blue); }
 .kpi-highlight-amber .kpi-value { color: var(--accent-amber); }
 .kpi-highlight-red .kpi-value { color: var(--accent-rose); }
 .kpi-amount { color: var(--accent-cyan); }

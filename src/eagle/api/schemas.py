@@ -91,6 +91,7 @@ class RunMetricsResponse(BaseModel):
     unresolved_count: int
     match_rate: float
     exception_rate: float
+    value_weighted_match_rate: float = 0.0
     total_reconciled_amount: str
 
 

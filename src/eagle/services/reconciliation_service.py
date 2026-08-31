@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import BinaryIO, List, Optional, TextIO, Union
 
@@ -477,3 +478,80 @@ class ReconciliationService:
                         )
 
         return decisions
+
+    def calculate_metrics(self, run_id: str) -> Optional[dict]:
+        """Calculate and return operational KPI metrics and value-weighted rates for a run."""
+        run = self.repository.get_run(run_id)
+        if not run:
+            return None
+
+        results = self.repository.get_results(run_id)
+        total_reconciled_amount = sum(
+            (r.reconciled_amount for r in results if r.reconciled_amount is not None),
+            Decimal("0.00"),
+        )
+
+        total_records = run.get("total_records", 0)
+        source_count = run.get("source_count", 0)
+        target_count = run.get("target_count", 0)
+        matched_count = run.get("matched_count", 0)
+        exception_count = run.get("exception_count", 0)
+        missing_count = run.get("missing_count", 0)
+        unresolved_count = run.get("unresolved_count", 0)
+
+        # 1. Record-Weighted Match & Exception Rate
+        denominator = source_count if source_count > 0 else (total_records / 2 if total_records > 0 else 1)
+        match_rate = round(float(matched_count) / float(denominator) * 100, 2)
+        exception_rate = round(float(exception_count) / float(denominator) * 100, 2)
+
+        # 2. Value-Weighted Match Rate
+        # Retrieve all source-side records for this run
+        source_records = self.repository.get_records(run_id, source="GATEWAY")
+        if not source_records:
+            all_records = self.repository.get_records(run_id)
+            source_records = [r for r in all_records if r.source != "BANK"]
+            if not source_records and all_records:
+                source_records = all_records
+
+        # Total gross source value (sum of absolute amounts of all source records)
+        total_gross_source_value = sum(
+            (abs(r.amount) for r in source_records),
+            Decimal("0.00"),
+        )
+
+        # Identify unique source record IDs belonging to committed MATCHED relationships
+        reconciled_source_ids = set()
+        for r in results:
+            if r.outcome == ReconciliationOutcome.MATCHED:
+                for sid in r.source_record_ids:
+                    if sid:
+                        reconciled_source_ids.add(sid)
+
+        # Reconciled gross source value (each participating source record counted exactly once)
+        reconciled_gross_source_value = sum(
+            (abs(r.amount) for r in source_records if r.record_id in reconciled_source_ids),
+            Decimal("0.00"),
+        )
+
+        if total_gross_source_value > Decimal("0.00"):
+            value_weighted_match_rate = round(
+                float(reconciled_gross_source_value / total_gross_source_value) * 100, 2
+            )
+        else:
+            value_weighted_match_rate = 0.0
+
+        return {
+            "run_id": run_id,
+            "status": run.get("status", "UNKNOWN"),
+            "total_records": total_records,
+            "source_count": source_count,
+            "target_count": target_count,
+            "matched_count": matched_count,
+            "exception_count": exception_count,
+            "missing_count": missing_count,
+            "unresolved_count": unresolved_count,
+            "match_rate": match_rate,
+            "exception_rate": exception_rate,
+            "value_weighted_match_rate": value_weighted_match_rate,
+            "total_reconciled_amount": f"{total_reconciled_amount:.2f}",
+        }
