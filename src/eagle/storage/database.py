@@ -154,11 +154,31 @@ class Database:
                         FOREIGN KEY (run_id) REFERENCES runs (run_id) ON DELETE CASCADE
                     );
 
+                    CREATE TABLE IF NOT EXISTS operator_corrections (
+                        correction_id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        relationship_id TEXT NOT NULL,
+                        original_outcome TEXT NOT NULL,
+                        original_exception_type TEXT,
+                        original_source_ids TEXT NOT NULL,
+                        original_target_ids TEXT NOT NULL,
+                        corrected_outcome TEXT NOT NULL,
+                        corrected_exception_type TEXT,
+                        corrected_source_ids TEXT NOT NULL,
+                        corrected_target_ids TEXT NOT NULL,
+                        operator_reason TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        generated_rule_id TEXT,
+                        FOREIGN KEY (run_id) REFERENCES runs (run_id) ON DELETE CASCADE
+                    );
+
                     CREATE INDEX IF NOT EXISTS idx_records_run ON records (run_id);
                     CREATE INDEX IF NOT EXISTS idx_records_lookup ON records (run_id, record_id);
                     CREATE INDEX IF NOT EXISTS idx_results_run ON reconciliation_results (run_id);
                     CREATE INDEX IF NOT EXISTS idx_candidates_run ON candidate_decisions (run_id);
                     CREATE INDEX IF NOT EXISTS idx_audit_run ON audit_logs (run_id);
+                    CREATE INDEX IF NOT EXISTS idx_corrections_run ON operator_corrections (run_id);
+                    CREATE INDEX IF NOT EXISTS idx_corrections_rel ON operator_corrections (run_id, relationship_id);
                     """
                 )
         finally:

@@ -13,6 +13,7 @@ from eagle.models.enums import (
     Severity,
 )
 from eagle.models.reconciliation import ReconciliationResult
+from eagle.rules.models import OperatorCorrection
 from eagle.storage.database import Database
 
 
@@ -327,6 +328,31 @@ class Repository:
             if not self.db._is_memory:
                 conn.close()
 
+    def get_result(self, run_id: str, relationship_id: str) -> Optional[ReconciliationResult]:
+        """Retrieve a specific ReconciliationResult by run_id and relationship_id."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM reconciliation_results WHERE run_id = ? AND relationship_id = ?",
+                (run_id, relationship_id),
+            ).fetchone()
+            if not row:
+                return None
+            return ReconciliationResult(
+                relationship_id=row["relationship_id"],
+                relationship_type=RelationshipType(row["relationship_type"]),
+                source_record_ids=json.loads(row["source_record_ids"]),
+                target_record_ids=json.loads(row["target_record_ids"]),
+                outcome=ReconciliationOutcome(row["outcome"]),
+                exception_type=ExceptionType(row["exception_type"]) if row["exception_type"] else None,
+                severity=Severity(row["severity"]) if row["severity"] else None,
+                flag_for_review=bool(row["flag_for_review"]),
+                reconciled_amount=Decimal(row["reconciled_amount"]) if row["reconciled_amount"] is not None else None,
+            )
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+
     # -------------------------------------------------------------------------
     # Candidate Decisions
     # -------------------------------------------------------------------------
@@ -428,3 +454,138 @@ class Repository:
         finally:
             if not self.db._is_memory:
                 conn.close()
+
+    # -------------------------------------------------------------------------
+    # Operator Corrections
+    # -------------------------------------------------------------------------
+
+    def save_correction(self, correction: OperatorCorrection) -> None:
+        """Persist an immutable operator correction."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO operator_corrections (
+                    correction_id, run_id, relationship_id,
+                    original_outcome, original_exception_type,
+                    original_source_ids, original_target_ids,
+                    corrected_outcome, corrected_exception_type,
+                    corrected_source_ids, corrected_target_ids,
+                    operator_reason, created_at, generated_rule_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    correction.correction_id,
+                    correction.run_id,
+                    correction.relationship_id,
+                    correction.original_outcome,
+                    correction.original_exception_type,
+                    json.dumps(correction.original_source_ids),
+                    json.dumps(correction.original_target_ids),
+                    correction.corrected_outcome,
+                    correction.corrected_exception_type,
+                    json.dumps(correction.corrected_source_ids),
+                    json.dumps(correction.corrected_target_ids),
+                    correction.operator_reason,
+                    correction.created_at,
+                    correction.generated_rule_id,
+                ),
+            )
+
+    def get_corrections(self, run_id: str) -> List[OperatorCorrection]:
+        """Retrieve all operator corrections for a run in chronological order."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM operator_corrections WHERE run_id = ? ORDER BY created_at ASC, rowid ASC",
+                (run_id,),
+            ).fetchall()
+            return [
+                OperatorCorrection(
+                    correction_id=r["correction_id"],
+                    run_id=r["run_id"],
+                    relationship_id=r["relationship_id"],
+                    original_outcome=r["original_outcome"],
+                    original_exception_type=r["original_exception_type"],
+                    original_source_ids=json.loads(r["original_source_ids"]),
+                    original_target_ids=json.loads(r["original_target_ids"]),
+                    corrected_outcome=r["corrected_outcome"],
+                    corrected_exception_type=r["corrected_exception_type"],
+                    corrected_source_ids=json.loads(r["corrected_source_ids"]),
+                    corrected_target_ids=json.loads(r["corrected_target_ids"]),
+                    operator_reason=r["operator_reason"],
+                    created_at=r["created_at"],
+                    generated_rule_id=r["generated_rule_id"],
+                )
+                for r in rows
+            ]
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+
+    def get_correction(self, correction_id: str) -> Optional[OperatorCorrection]:
+        """Retrieve a specific operator correction by ID."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM operator_corrections WHERE correction_id = ?",
+                (correction_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return OperatorCorrection(
+                correction_id=row["correction_id"],
+                run_id=row["run_id"],
+                relationship_id=row["relationship_id"],
+                original_outcome=row["original_outcome"],
+                original_exception_type=row["original_exception_type"],
+                original_source_ids=json.loads(row["original_source_ids"]),
+                original_target_ids=json.loads(row["original_target_ids"]),
+                corrected_outcome=row["corrected_outcome"],
+                corrected_exception_type=row["corrected_exception_type"],
+                corrected_source_ids=json.loads(row["corrected_source_ids"]),
+                corrected_target_ids=json.loads(row["corrected_target_ids"]),
+                operator_reason=row["operator_reason"],
+                created_at=row["created_at"],
+                generated_rule_id=row["generated_rule_id"],
+            )
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+
+    def get_corrections_for_relationship(
+        self, run_id: str, relationship_id: str
+    ) -> List[OperatorCorrection]:
+        """Retrieve all corrections associated with a specific relationship."""
+        conn = self.db.get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT * FROM operator_corrections
+                WHERE run_id = ? AND relationship_id = ?
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (run_id, relationship_id),
+            ).fetchall()
+            return [
+                OperatorCorrection(
+                    correction_id=r["correction_id"],
+                    run_id=r["run_id"],
+                    relationship_id=r["relationship_id"],
+                    original_outcome=r["original_outcome"],
+                    original_exception_type=r["original_exception_type"],
+                    original_source_ids=json.loads(r["original_source_ids"]),
+                    original_target_ids=json.loads(r["original_target_ids"]),
+                    corrected_outcome=r["corrected_outcome"],
+                    corrected_exception_type=r["corrected_exception_type"],
+                    corrected_source_ids=json.loads(r["corrected_source_ids"]),
+                    corrected_target_ids=json.loads(r["corrected_target_ids"]),
+                    operator_reason=r["operator_reason"],
+                    created_at=r["created_at"],
+                    generated_rule_id=r["generated_rule_id"],
+                )
+                for r in rows
+            ]
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+

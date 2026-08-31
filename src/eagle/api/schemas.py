@@ -110,7 +110,48 @@ class JsonRunCreateRequest(BaseModel):
     target_records: List[Dict[str, Any]]
 
 
+# ---------------------------------------------------------------------------
+# Operator Corrections
+# ---------------------------------------------------------------------------
+
+class CorrectionCreateRequest(BaseModel):
+    """Request payload for an operator submitting a manual correction."""
+    corrected_outcome: str = Field(..., description="Target outcome: MATCHED or EXCEPTION")
+    corrected_exception_type: Optional[str] = Field(None, description="Optional ExceptionType classification")
+    corrected_source_ids: List[str] = Field(default_factory=list, description="Source record IDs involved in corrected relationship")
+    corrected_target_ids: List[str] = Field(default_factory=list, description="Target record IDs involved in corrected relationship")
+    operator_reason: str = Field(..., min_length=3, description="Mandatory operator explanation/rationale")
+    generate_rule: bool = Field(False, description="Flag indicating intent to synthesize a rule (handled in Day 2)")
+
+
+class OperatorCorrectionResponse(BaseModel):
+    """Response model representing a persisted operator correction."""
+    correction_id: str
+    run_id: str
+    relationship_id: str
+    original_outcome: str
+    original_exception_type: Optional[str] = None
+    original_source_ids: List[str]
+    original_target_ids: List[str]
+    corrected_outcome: str
+    corrected_exception_type: Optional[str] = None
+    corrected_source_ids: List[str]
+    corrected_target_ids: List[str]
+    operator_reason: str
+    created_at: str
+    status: str = "COMMITTED"
+    generated_rule_id: Optional[str] = None
+
+
+class CorrectionListResponse(BaseModel):
+    """List of operator corrections for a run."""
+    run_id: str
+    corrections: List[OperatorCorrectionResponse]
+    total: int
+
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
     error: str
     detail: Optional[str] = None
+
