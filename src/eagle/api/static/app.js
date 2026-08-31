@@ -68,6 +68,20 @@ const API = {
     return await res.json();
   },
 
+  async extractPreview(file, sourceType = 'GATEWAY') {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`/runs/extract-preview?source_type=${encodeURIComponent(sourceType)}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Preview extraction error' }));
+      throw new Error(err.detail || 'Preview extraction failed');
+    }
+    return await res.json();
+  },
+
   async getSyntheticDataSample() {
     const res = await fetch('/demo/synthetic-data');
     if (!res.ok) throw new Error('Synthetic sample dataset unavailable');
@@ -600,7 +614,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     e.preventDefault();
 
     if (!state.selectedGatewayFile || !state.selectedBankFile) {
-      showToast('Please select both Gateway and Bank CSV files.', 'error');
+      showToast('Please select both Gateway and Bank transaction files (CSV, JSON, PDF, or Image).', 'error');
       return;
     }
 
@@ -612,15 +626,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     progressBox.classList.remove('hidden');
     submitBtn.disabled = true;
 
-    progressBar.style.width = '30%';
-    progressText.textContent = 'Uploading files to engine...';
+    progressBar.style.width = '25%';
+    progressText.textContent = 'Ingesting & extracting document records...';
 
     const formData = new FormData();
     formData.append('gateway_file', state.selectedGatewayFile);
     formData.append('bank_file', state.selectedBankFile);
 
     try {
-      progressBar.style.width = '70%';
+      progressBar.style.width = '60%';
       progressText.textContent = 'Executing deterministic matching & AI classification...';
 
       const response = await API.createRun(formData);
