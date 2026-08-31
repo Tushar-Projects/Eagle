@@ -11,6 +11,8 @@ from eagle.agents.classifier import AIExceptionClassifier
 from eagle.agents.provider import LLMProvider, create_provider
 from eagle.core.config import Settings, settings as global_settings
 from eagle.extraction.csv_extractor import CsvExtractor
+from eagle.extraction.models import DocumentExtractionResult
+from eagle.extraction.router import ExtractorRouter
 from eagle.models.canonical import CanonicalRecord
 from eagle.models.enums import ExceptionType, ReconciliationOutcome
 from eagle.models.evidence import CandidateRelationshipEvidence, EngineOutput
@@ -36,6 +38,7 @@ class ReconciliationService:
         repository: Optional[Repository] = None,
         provider: Optional[LLMProvider] = None,
         settings: Optional[Settings] = None,
+        router: Optional[ExtractorRouter] = None,
     ):
         self.settings = settings or global_settings
         
@@ -53,6 +56,7 @@ class ReconciliationService:
             self.provider_name = self.settings.AI_PROVIDER
 
         self.csv_extractor = CsvExtractor()
+        self.router = router or ExtractorRouter()
 
     # -------------------------------------------------------------------------
     # Public Entry Points
@@ -63,22 +67,50 @@ class ReconciliationService:
         gateway_input: Union[str, Path, TextIO, BinaryIO, bytes],
         bank_input: Union[str, Path, TextIO, BinaryIO, bytes],
         run_id: Optional[str] = None,
+        gateway_filename: str = "gateway.csv",
+        bank_filename: str = "bank.csv",
+        gateway_content_type: Optional[str] = None,
+        bank_content_type: Optional[str] = None,
     ) -> dict:
         """Synchronous ingestion and reconciliation from Gateway and Bank files."""
-        return asyncio.run(self.reconcile_files_async(gateway_input, bank_input, run_id))
+        return asyncio.run(
+            self.reconcile_files_async(
+                gateway_input,
+                bank_input,
+                run_id=run_id,
+                gateway_filename=gateway_filename,
+                bank_filename=bank_filename,
+                gateway_content_type=gateway_content_type,
+                bank_content_type=bank_content_type,
+            )
+        )
 
     async def reconcile_files_async(
         self,
         gateway_input: Union[str, Path, TextIO, BinaryIO, bytes],
         bank_input: Union[str, Path, TextIO, BinaryIO, bytes],
         run_id: Optional[str] = None,
+        gateway_filename: str = "gateway.csv",
+        bank_filename: str = "bank.csv",
+        gateway_content_type: Optional[str] = None,
+        bank_content_type: Optional[str] = None,
     ) -> dict:
-        """Asynchronously extract records from files and execute reconciliation."""
+        """Asynchronously extract records from files across formats and execute reconciliation."""
         rid = run_id or generate_run_id()
 
         try:
-            sources = self.csv_extractor.extract(gateway_input, source_type="GATEWAY")
-            targets = self.csv_extractor.extract(bank_input, source_type="BANK")
+            sources = await self.router.extract_async(
+                gateway_input,
+                source_type="GATEWAY",
+                filename=gateway_filename,
+                content_type=gateway_content_type,
+            )
+            targets = await self.router.extract_async(
+                bank_input,
+                source_type="BANK",
+                filename=bank_filename,
+                content_type=bank_content_type,
+            )
         except Exception as e:
             # Record failed run if extraction fails
             self.repository.create_run(
@@ -98,6 +130,21 @@ class ReconciliationService:
             raise
 
         return await self.reconcile_records_async(sources, targets, run_id=rid)
+
+    async def extract_preview_async(
+        self,
+        file_input: Union[str, Path, TextIO, BinaryIO, bytes],
+        source_type: str = "GATEWAY",
+        filename: str = "document",
+        content_type: Optional[str] = None,
+    ) -> DocumentExtractionResult:
+        """Extract transactions as a preview result without triggering reconciliation."""
+        return await self.router.extract_preview_async(
+            file_input=file_input,
+            source_type=source_type,
+            filename=filename,
+            content_type=content_type,
+        )
 
     def reconcile_records(
         self,

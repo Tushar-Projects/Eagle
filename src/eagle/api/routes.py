@@ -23,6 +23,7 @@ from eagle.core.config import Settings, settings as global_settings
 from eagle.export.csv_exporter import export_results_to_csv
 from eagle.export.json_exporter import export_results_to_json
 from eagle.extraction.json_extractor import JsonExtractor
+from eagle.extraction.models import DocumentExtractionResult
 from eagle.models.enums import ExceptionType, ReconciliationOutcome, RelationshipType, Severity
 from eagle.services.reconciliation_service import ReconciliationService
 from eagle.storage.database import Database
@@ -30,6 +31,10 @@ from eagle.storage.repository import Repository
 
 router = APIRouter()
 
+
+# -------------------------------------------------------------------------
+# Dependency Injection
+# -------------------------------------------------------------------------
 
 def get_service() -> ReconciliationService:
     """Dependency provider for ReconciliationService."""
@@ -39,14 +44,15 @@ def get_service() -> ReconciliationService:
 
 
 # -------------------------------------------------------------------------
-# Health Check
+# Health & Status
 # -------------------------------------------------------------------------
 
 @router.get("/health", tags=["System"])
 def health_check(service: ReconciliationService = Depends(get_service)):
-    """Return API health status and configured AI provider."""
+    """Liveness probe returning engine health and active AI provider."""
     return {
         "status": "ok",
+        "service": "Eagle Financial Reconciliation Engine",
         "provider": service.provider_name,
     }
 
@@ -75,8 +81,34 @@ def get_synthetic_data_sample():
 
 
 # -------------------------------------------------------------------------
-# Runs
+# Runs & Extraction
 # -------------------------------------------------------------------------
+
+@router.post(
+    "/runs/extract-preview",
+    response_model=DocumentExtractionResult,
+    tags=["Extraction"],
+)
+async def extract_document_preview(
+    file: UploadFile = File(..., description="Financial document (CSV, JSON, PDF, PNG, JPG)"),
+    source_type: str = Query("GATEWAY", description="Designated source slot: 'GATEWAY' or 'BANK'"),
+    service: ReconciliationService = Depends(get_service),
+):
+    """Extract transactions from an uploaded document for preview/inspection without committing to a run."""
+    try:
+        content = await file.read()
+        return await service.extract_preview_async(
+            file_input=content,
+            source_type=source_type,
+            filename=file.filename or "document",
+            content_type=file.content_type,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Extraction preview failed: {e}",
+        ) from e
+
 
 @router.post(
     "/runs",
@@ -85,11 +117,11 @@ def get_synthetic_data_sample():
     tags=["Runs"],
 )
 async def create_run_from_files(
-    gateway_file: UploadFile = File(..., description="Gateway transaction CSV file"),
-    bank_file: UploadFile = File(..., description="Bank transaction CSV file"),
+    gateway_file: UploadFile = File(..., description="Gateway transaction file (CSV, JSON, PDF, PNG, JPG)"),
+    bank_file: UploadFile = File(..., description="Bank transaction file (CSV, JSON, PDF, PNG, JPG)"),
     service: ReconciliationService = Depends(get_service),
 ):
-    """Trigger a new reconciliation run by uploading Gateway and Bank CSV files."""
+    """Trigger a new reconciliation run by uploading Gateway and Bank files across supported formats."""
     try:
         gtw_bytes = await gateway_file.read()
         bank_bytes = await bank_file.read()
@@ -97,6 +129,10 @@ async def create_run_from_files(
         result = await service.reconcile_files_async(
             gateway_input=gtw_bytes,
             bank_input=bank_bytes,
+            gateway_filename=gateway_file.filename or "gateway",
+            bank_filename=bank_file.filename or "bank",
+            gateway_content_type=gateway_file.content_type,
+            bank_content_type=bank_file.content_type,
         )
         return RunResponse.model_validate(result["summary"])
     except Exception as e:

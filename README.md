@@ -147,12 +147,12 @@ For **local LLM execution** via externally managed `llama-server`:
 ```env
 AI_PROVIDER=llama_server
 AI_MODEL=google_gemma-4-E2B-it-Q8_0
-LLAMA_SERVER_URL=http://127.0.0.1:8000
+LLAMA_SERVER_URL=http://127.0.0.1:8080
 ```
 
 *(If running local LLM, start `llama-server.exe` in a separate terminal:)*
 ```powershell
-llama-server.exe -m "path\to\google_gemma-4-E2B-it-Q8_0.gguf" --port 8000
+llama-server.exe -m "path\to\google_gemma-4-E2B-it-Q8_0.gguf" --port 8080
 ```
 
 ### Step 3: Launch Interactive Demo
