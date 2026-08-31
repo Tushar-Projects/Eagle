@@ -386,43 +386,15 @@ def get_run_metrics(
     run_id: str,
     service: ReconciliationService = Depends(get_service),
 ):
-    """Calculate and return operational KPI metrics for a run."""
-    run = service.repository.get_run(run_id)
-    if not run:
+    """Calculate and return operational KPI metrics and value-weighted rates for a run."""
+    metrics_data = service.calculate_metrics(run_id)
+    if not metrics_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Reconciliation run '{run_id}' not found.",
         )
 
-    results = service.repository.get_results(run_id)
-    total_amount = sum(
-        (r.reconciled_amount for r in results if r.reconciled_amount is not None),
-        Decimal("0.00"),
-    )
-
-    total_records = run.get("total_records", 0)
-    source_count = run.get("source_count", 0)
-    matched_count = run.get("matched_count", 0)
-    exception_count = run.get("exception_count", 0)
-
-    denominator = source_count if source_count > 0 else (total_records / 2 if total_records > 0 else 1)
-    match_rate = round(float(matched_count) / float(denominator) * 100, 2)
-    exception_rate = round(float(exception_count) / float(denominator) * 100, 2)
-
-    return RunMetricsResponse(
-        run_id=run_id,
-        status=run.get("status", "UNKNOWN"),
-        total_records=total_records,
-        source_count=source_count,
-        target_count=run.get("target_count", 0),
-        matched_count=matched_count,
-        exception_count=exception_count,
-        missing_count=run.get("missing_count", 0),
-        unresolved_count=run.get("unresolved_count", 0),
-        match_rate=match_rate,
-        exception_rate=exception_rate,
-        total_reconciled_amount=f"{total_amount:.2f}",
-    )
+    return RunMetricsResponse.model_validate(metrics_data)
 
 
 @router.get(
