@@ -1,8 +1,10 @@
 """FastAPI route handlers for reconciliation runs, results, and export."""
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
+import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import Response
@@ -12,7 +14,10 @@ from eagle.api.schemas import (
     CandidateDecisionResponse,
     CandidateListResponse,
     CandidateOptionItem,
+    CorrectionCreateRequest,
+    CorrectionListResponse,
     JsonRunCreateRequest,
+    OperatorCorrectionResponse,
     ReconciliationResultResponse,
     ResultsListResponse,
     RunListResponse,
@@ -25,6 +30,7 @@ from eagle.export.json_exporter import export_results_to_json
 from eagle.extraction.json_extractor import JsonExtractor
 from eagle.extraction.models import DocumentExtractionResult
 from eagle.models.enums import ExceptionType, ReconciliationOutcome, RelationshipType, Severity
+from eagle.rules.models import OperatorCorrection
 from eagle.services.reconciliation_service import ReconciliationService
 from eagle.storage.database import Database
 from eagle.storage.repository import Repository
@@ -465,3 +471,242 @@ def export_run_results(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported export format '{format}'. Supported formats: 'csv', 'json'.",
         )
+
+
+# -------------------------------------------------------------------------
+# Operator Corrections & Review
+# -------------------------------------------------------------------------
+
+@router.post(
+    "/runs/{run_id}/results/{relationship_id}/correct",
+    response_model=OperatorCorrectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Corrections"],
+)
+def submit_operator_correction(
+    run_id: str,
+    relationship_id: str,
+    payload: CorrectionCreateRequest,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Submit a structured manual correction against an existing reconciliation result.
+
+    The original reconciliation result remains completely immutable. The correction
+    is persisted as an append-only auditable event.
+    """
+    # 1. Verify run exists
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+
+    # 2. Verify relationship exists in this run
+    orig_result = service.repository.get_result(run_id, relationship_id)
+    if not orig_result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation relationship '{relationship_id}' not found in run '{run_id}'.",
+        )
+
+    # 3. Validate corrected outcome
+    outcome_str = payload.corrected_outcome.strip().upper()
+    valid_outcomes = {o.value for o in ReconciliationOutcome}
+    if outcome_str not in valid_outcomes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid corrected outcome '{payload.corrected_outcome}'. Supported outcomes: {sorted(valid_outcomes)}.",
+        )
+
+    # 4. Validate corrected exception type if supplied
+    ex_type_str = None
+    if payload.corrected_exception_type:
+        ex_type_str = payload.corrected_exception_type.strip().upper()
+        valid_ex_types = {e.value for e in ExceptionType}
+        if ex_type_str not in valid_ex_types:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid exception type '{payload.corrected_exception_type}'. Supported: {sorted(valid_ex_types)}.",
+            )
+
+    # 5. Validate participant record IDs exist in this run (no fabrication)
+    run_records = service.repository.get_records(run_id)
+    valid_record_ids = {r.record_id for r in run_records}
+
+    if not payload.corrected_source_ids and not payload.corrected_target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least one source or target record ID must be specified in the correction.",
+        )
+
+    for sid in payload.corrected_source_ids:
+        if sid not in valid_record_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Source record ID '{sid}' does not exist in run '{run_id}'. Record fabrication is prohibited.",
+            )
+
+    for tid in payload.corrected_target_ids:
+        if tid not in valid_record_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Target record ID '{tid}' does not exist in run '{run_id}'. Record fabrication is prohibited.",
+            )
+
+    # 6. Validate topology: No N:M
+    if len(payload.corrected_source_ids) > 1 and len(payload.corrected_target_ids) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="General N:M relationship topology is not supported for corrections. Topologies must be 1:1, 1:N, N:1, 1:0, or 0:1.",
+        )
+
+    # 7. Construct immutable correction record
+    correction_id = f"CORR-{uuid.uuid4().hex[:8].upper()}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    orig_outcome_str = orig_result.outcome.value if hasattr(orig_result.outcome, "value") else str(orig_result.outcome)
+    orig_ex_type_str = (
+        orig_result.exception_type.value if orig_result.exception_type and hasattr(orig_result.exception_type, "value")
+        else (str(orig_result.exception_type) if orig_result.exception_type else None)
+    )
+
+    correction = OperatorCorrection(
+        correction_id=correction_id,
+        run_id=run_id,
+        relationship_id=relationship_id,
+        original_outcome=orig_outcome_str,
+        original_exception_type=orig_ex_type_str,
+        original_source_ids=orig_result.source_record_ids,
+        original_target_ids=orig_result.target_record_ids,
+        corrected_outcome=outcome_str,
+        corrected_exception_type=ex_type_str,
+        corrected_source_ids=payload.corrected_source_ids,
+        corrected_target_ids=payload.corrected_target_ids,
+        operator_reason=payload.operator_reason.strip(),
+        created_at=now_iso,
+        generated_rule_id=None,
+    )
+
+    # 8. Persist correction & log audit event
+    service.repository.save_correction(correction)
+    service.repository.save_audit_event(
+        run_id,
+        "OPERATOR_CORRECTION_CREATED",
+        {
+            "correction_id": correction_id,
+            "relationship_id": relationship_id,
+            "original_outcome": orig_outcome_str,
+            "corrected_outcome": outcome_str,
+            "operator_reason": payload.operator_reason.strip(),
+            "generate_rule_intent": payload.generate_rule,
+        },
+    )
+
+    return OperatorCorrectionResponse(
+        correction_id=correction.correction_id,
+        run_id=correction.run_id,
+        relationship_id=correction.relationship_id,
+        original_outcome=correction.original_outcome,
+        original_exception_type=correction.original_exception_type,
+        original_source_ids=correction.original_source_ids,
+        original_target_ids=correction.original_target_ids,
+        corrected_outcome=correction.corrected_outcome,
+        corrected_exception_type=correction.corrected_exception_type,
+        corrected_source_ids=correction.corrected_source_ids,
+        corrected_target_ids=correction.corrected_target_ids,
+        operator_reason=correction.operator_reason,
+        created_at=correction.created_at,
+        status="COMMITTED",
+        generated_rule_id=correction.generated_rule_id,
+    )
+
+
+@router.get(
+    "/runs/{run_id}/corrections",
+    response_model=CorrectionListResponse,
+    tags=["Corrections"],
+)
+def get_run_corrections(
+    run_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Retrieve all operator corrections submitted for a run."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+
+    corrections = service.repository.get_corrections(run_id)
+    items = [
+        OperatorCorrectionResponse(
+            correction_id=c.correction_id,
+            run_id=c.run_id,
+            relationship_id=c.relationship_id,
+            original_outcome=c.original_outcome,
+            original_exception_type=c.original_exception_type,
+            original_source_ids=c.original_source_ids,
+            original_target_ids=c.original_target_ids,
+            corrected_outcome=c.corrected_outcome,
+            corrected_exception_type=c.corrected_exception_type,
+            corrected_source_ids=c.corrected_source_ids,
+            corrected_target_ids=c.corrected_target_ids,
+            operator_reason=c.operator_reason,
+            created_at=c.created_at,
+            status="COMMITTED",
+            generated_rule_id=c.generated_rule_id,
+        )
+        for c in corrections
+    ]
+
+    return CorrectionListResponse(
+        run_id=run_id,
+        corrections=items,
+        total=len(items),
+    )
+
+
+@router.get(
+    "/runs/{run_id}/corrections/{correction_id}",
+    response_model=OperatorCorrectionResponse,
+    tags=["Corrections"],
+)
+def get_run_correction_by_id(
+    run_id: str,
+    correction_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Retrieve a specific operator correction by ID."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+
+    corr = service.repository.get_correction(correction_id)
+    if not corr or corr.run_id != run_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Operator correction '{correction_id}' not found in run '{run_id}'.",
+        )
+
+    return OperatorCorrectionResponse(
+        correction_id=corr.correction_id,
+        run_id=corr.run_id,
+        relationship_id=corr.relationship_id,
+        original_outcome=corr.original_outcome,
+        original_exception_type=corr.original_exception_type,
+        original_source_ids=corr.original_source_ids,
+        original_target_ids=corr.original_target_ids,
+        corrected_outcome=corr.corrected_outcome,
+        corrected_exception_type=corr.corrected_exception_type,
+        corrected_source_ids=corr.corrected_source_ids,
+        corrected_target_ids=corr.corrected_target_ids,
+        operator_reason=corr.operator_reason,
+        created_at=corr.created_at,
+        status="COMMITTED",
+        generated_rule_id=corr.generated_rule_id,
+    )
