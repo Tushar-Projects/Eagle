@@ -16,10 +16,13 @@ from eagle.api.schemas import (
     CandidateOptionItem,
     CorrectionCreateRequest,
     CorrectionListResponse,
+    IndexRunResponse,
     JsonRunCreateRequest,
     MetricDelta,
     MetricSnapshot,
     OperatorCorrectionResponse,
+    QARequestPayload,
+    QAResponsePayload,
     ReconciliationResultResponse,
     RerunRequest,
     RerunResponse,
@@ -32,7 +35,9 @@ from eagle.api.schemas import (
     RunListResponse,
     RunMetricsResponse,
     RunResponse,
+    SourceAttributionResponse,
 )
+
 from eagle.core.config import Settings, settings as global_settings
 from eagle.export.csv_exporter import export_results_to_csv
 from eagle.export.json_exporter import export_results_to_json
@@ -997,5 +1002,121 @@ def toggle_rule(
             )
 
     return RuleToggleResponse(rule_id=rule_id, is_active=payload.is_active)
+
+
+# ---------------------------------------------------------------------------
+# Grounded Q&A / RAG Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/qa",
+    response_model=QAResponsePayload,
+    tags=["Q&A / RAG"],
+)
+async def ask_question(
+    payload: QARequestPayload,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Answer natural language operational questions grounded in Eagle's ChromaDB knowledge store."""
+    from eagle.rag.models import QARequest
+    req = QARequest(
+        question=payload.question,
+        run_id=payload.run_id,
+        max_sources=payload.max_sources,
+    )
+    res = await service.qa_agent.answer_question(req)
+
+    return QAResponsePayload(
+        question=res.question,
+        answer=res.answer,
+        sources=[
+            SourceAttributionResponse(
+                document_type=s.document_type,
+                identifier=s.identifier,
+                title=s.title,
+                snippet=s.snippet,
+                run_id=s.run_id,
+                relationship_id=s.relationship_id,
+                rule_id=s.rule_id,
+                correction_id=s.correction_id,
+            )
+            for s in res.sources
+        ],
+        run_id=res.run_id,
+        has_sufficient_evidence=res.has_sufficient_evidence,
+        retrieval_latency_ms=res.retrieval_latency_ms,
+        generation_latency_ms=res.generation_latency_ms,
+    )
+
+
+@router.post(
+    "/runs/{run_id}/qa",
+    response_model=QAResponsePayload,
+    tags=["Q&A / RAG"],
+)
+async def ask_run_question(
+    run_id: str,
+    payload: QARequestPayload,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Answer natural language operational questions scoped specifically to a run."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run '{run_id}' not found.",
+        )
+
+    from eagle.rag.models import QARequest
+    req = QARequest(
+        question=payload.question,
+        run_id=run_id,
+        max_sources=payload.max_sources,
+    )
+    res = await service.qa_agent.answer_question(req)
+
+    return QAResponsePayload(
+        question=res.question,
+        answer=res.answer,
+        sources=[
+            SourceAttributionResponse(
+                document_type=s.document_type,
+                identifier=s.identifier,
+                title=s.title,
+                snippet=s.snippet,
+                run_id=s.run_id,
+                relationship_id=s.relationship_id,
+                rule_id=s.rule_id,
+                correction_id=s.correction_id,
+            )
+            for s in res.sources
+        ],
+        run_id=run_id,
+        has_sufficient_evidence=res.has_sufficient_evidence,
+        retrieval_latency_ms=res.retrieval_latency_ms,
+        generation_latency_ms=res.generation_latency_ms,
+    )
+
+
+@router.post(
+    "/runs/{run_id}/index",
+    response_model=IndexRunResponse,
+    tags=["Q&A / RAG"],
+)
+def index_run_documents(
+    run_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Manually index or re-index all operational data for a run into ChromaDB."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run '{run_id}' not found.",
+        )
+
+    count = service.index_run(run_id)
+    return IndexRunResponse(run_id=run_id, documents_indexed=count, status="INDEXED")
+
 
 
