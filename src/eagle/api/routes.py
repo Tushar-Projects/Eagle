@@ -17,9 +17,18 @@ from eagle.api.schemas import (
     CorrectionCreateRequest,
     CorrectionListResponse,
     JsonRunCreateRequest,
+    MetricDelta,
+    MetricSnapshot,
     OperatorCorrectionResponse,
     ReconciliationResultResponse,
+    RerunRequest,
+    RerunResponse,
     ResultsListResponse,
+    RuleImpactResponse,
+    RuleListResponse,
+    RuleResponse,
+    RuleToggleRequest,
+    RuleToggleResponse,
     RunListResponse,
     RunMetricsResponse,
     RunResponse,
@@ -30,7 +39,8 @@ from eagle.export.json_exporter import export_results_to_json
 from eagle.extraction.json_extractor import JsonExtractor
 from eagle.extraction.models import DocumentExtractionResult
 from eagle.models.enums import ExceptionType, ReconciliationOutcome, RelationshipType, Severity
-from eagle.rules.models import OperatorCorrection
+from eagle.rules.models import OperatorCorrection, ReconciliationRule
+from eagle.rules.rule_synthesizer import RuleSynthesizer
 from eagle.services.reconciliation_service import ReconciliationService
 from eagle.storage.database import Database
 from eagle.storage.repository import Repository
@@ -571,6 +581,52 @@ def submit_operator_correction(
         else (str(orig_result.exception_type) if orig_result.exception_type else None)
     )
 
+    generated_rule_id = None
+    if payload.generate_rule:
+        # Synthesize generalized rule from participating CanonicalRecords
+        sources_list = [r for r in run_records if r.source != "BANK"]
+        targets_list = [r for r in run_records if r.source == "BANK"]
+        temp_correction = OperatorCorrection(
+            correction_id=correction_id,
+            run_id=run_id,
+            relationship_id=relationship_id,
+            original_outcome=orig_outcome_str,
+            original_exception_type=orig_ex_type_str,
+            original_source_ids=orig_result.source_record_ids,
+            original_target_ids=orig_result.target_record_ids,
+            corrected_outcome=outcome_str,
+            corrected_exception_type=ex_type_str,
+            corrected_source_ids=payload.corrected_source_ids,
+            corrected_target_ids=payload.corrected_target_ids,
+            operator_reason=payload.operator_reason.strip(),
+            created_at=now_iso,
+            generated_rule_id=None,
+        )
+        try:
+            rule = RuleSynthesizer.synthesize(
+                correction=temp_correction,
+                source_records=sources_list,
+                target_records=targets_list,
+            )
+            service.repository.save_rule(rule)
+            generated_rule_id = rule.rule_id
+            service.repository.save_audit_event(
+                run_id,
+                "RULE_CREATED",
+                {
+                    "rule_id": rule.rule_id,
+                    "name": rule.name,
+                    "confidence": rule.confidence,
+                    "source_correction_id": correction_id,
+                },
+            )
+        except Exception as e:
+            # If synthesis fails safety checks, reject with 422
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Rule synthesis failed safety constraints: {e}",
+            )
+
     correction = OperatorCorrection(
         correction_id=correction_id,
         run_id=run_id,
@@ -585,7 +641,7 @@ def submit_operator_correction(
         corrected_target_ids=payload.corrected_target_ids,
         operator_reason=payload.operator_reason.strip(),
         created_at=now_iso,
-        generated_rule_id=None,
+        generated_rule_id=generated_rule_id,
     )
 
     # 8. Persist correction & log audit event
@@ -600,6 +656,7 @@ def submit_operator_correction(
             "corrected_outcome": outcome_str,
             "operator_reason": payload.operator_reason.strip(),
             "generate_rule_intent": payload.generate_rule,
+            "generated_rule_id": generated_rule_id,
         },
     )
 
@@ -710,3 +767,235 @@ def get_run_correction_by_id(
         status="COMMITTED",
         generated_rule_id=corr.generated_rule_id,
     )
+
+
+# -------------------------------------------------------------------------
+# Rerun & Rule Impact
+# -------------------------------------------------------------------------
+
+@router.post(
+    "/runs/{run_id}/rerun",
+    response_model=RerunResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Rerun"],
+)
+async def rerun_reconciliation(
+    run_id: str,
+    payload: RerunRequest = RerunRequest(),
+    service: ReconciliationService = Depends(get_service),
+):
+    """Rerun reconciliation using original ingested records and applying active learned rules.
+
+    The original run remains completely immutable. A new distinct run ID is produced.
+    """
+    parent_run = service.repository.get_run(run_id)
+    if not parent_run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parent reconciliation run '{run_id}' not found.",
+        )
+
+    all_records = service.repository.get_records(run_id)
+    if not all_records:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No ingested records found for parent run '{run_id}'.",
+        )
+
+    sources = [r for r in all_records if r.source != "BANK"]
+    targets = [r for r in all_records if r.source == "BANK"]
+
+    rerun_id = f"{run_id}-RERUN-{uuid.uuid4().hex[:6].upper()}"
+
+    res = await service.reconcile_records_async(
+        sources=sources,
+        targets=targets,
+        run_id=rerun_id,
+        apply_rules=payload.apply_rules,
+    )
+
+    metrics = service.calculate_metrics(rerun_id)
+    summary_resp = RunMetricsResponse.model_validate(metrics) if metrics else RunMetricsResponse(
+        run_id=rerun_id,
+        status=res.get("status", "COMPLETED"),
+        total_records=len(all_records),
+        source_count=len(sources),
+        target_count=len(targets),
+        matched_count=0,
+        exception_count=0,
+        missing_count=0,
+        unresolved_count=0,
+        match_rate=0.0,
+        exception_rate=0.0,
+        value_weighted_match_rate=0.0,
+        total_reconciled_amount="0.00",
+    )
+
+    service.repository.save_audit_event(
+        rerun_id,
+        "RERUN_EXECUTED",
+        {
+            "parent_run_id": run_id,
+            "rerun_id": rerun_id,
+            "apply_rules": payload.apply_rules,
+        },
+    )
+
+    return RerunResponse(
+        parent_run_id=run_id,
+        rerun_id=rerun_id,
+        status=res.get("status", "COMPLETED"),
+        apply_rules=payload.apply_rules,
+        summary=summary_resp,
+    )
+
+
+@router.get(
+    "/runs/{run_id}/rule-impact",
+    response_model=RuleImpactResponse,
+    tags=["Rerun"],
+)
+def get_rule_impact(
+    run_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Retrieve before/after metric comparison showing the impact of learned rules."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+
+    all_runs = service.repository.list_runs(limit=500)
+    
+    before_id = None
+    after_id = None
+
+    if "-RERUN-" in run_id:
+        after_id = run_id
+        parent_candidate = run_id.split("-RERUN-")[0]
+        if any(r["run_id"] == parent_candidate for r in all_runs):
+            before_id = parent_candidate
+    else:
+        before_id = run_id
+        child_reruns = [r for r in all_runs if r["run_id"].startswith(f"{run_id}-RERUN-")]
+        if child_reruns:
+            after_id = child_reruns[0]["run_id"]
+
+    if not before_id or not after_id:
+        return RuleImpactResponse(run_id=run_id, has_rerun=False)
+
+    before_metrics = service.calculate_metrics(before_id)
+    after_metrics = service.calculate_metrics(after_id)
+
+    if not before_metrics or not after_metrics:
+        return RuleImpactResponse(run_id=run_id, has_rerun=False)
+
+    b_snap = MetricSnapshot(
+        run_id=before_id,
+        match_rate=before_metrics["match_rate"],
+        value_weighted_match_rate=before_metrics.get("value_weighted_match_rate", 0.0),
+        matched_count=before_metrics["matched_count"],
+        exception_count=before_metrics["exception_count"],
+        unresolved_count=before_metrics["unresolved_count"],
+        total_reconciled_amount=before_metrics["total_reconciled_amount"],
+    )
+
+    a_snap = MetricSnapshot(
+        run_id=after_id,
+        match_rate=after_metrics["match_rate"],
+        value_weighted_match_rate=after_metrics.get("value_weighted_match_rate", 0.0),
+        matched_count=after_metrics["matched_count"],
+        exception_count=after_metrics["exception_count"],
+        unresolved_count=after_metrics["unresolved_count"],
+        total_reconciled_amount=after_metrics["total_reconciled_amount"],
+    )
+
+    delta = MetricDelta(
+        match_rate_improvement=round(a_snap.match_rate - b_snap.match_rate, 2),
+        value_weighted_improvement=round(a_snap.value_weighted_match_rate - b_snap.value_weighted_match_rate, 2),
+        resolved_exceptions=b_snap.exception_count - a_snap.exception_count,
+        reconciled_amount_change=str(Decimal(a_snap.total_reconciled_amount) - Decimal(b_snap.total_reconciled_amount)),
+    )
+
+    return RuleImpactResponse(
+        run_id=run_id,
+        has_rerun=True,
+        before=b_snap,
+        after=a_snap,
+        delta=delta,
+    )
+
+
+# -------------------------------------------------------------------------
+# Rule Management
+# -------------------------------------------------------------------------
+
+@router.get(
+    "/rules",
+    response_model=RuleListResponse,
+    tags=["Rules"],
+)
+def list_rules(
+    active_only: bool = Query(False, description="Filter to only active rules"),
+    service: ReconciliationService = Depends(get_service),
+):
+    """List all synthesized reconciliation rules."""
+    rules = service.repository.get_rules(active_only=active_only)
+    rule_items = [RuleResponse.model_validate(r.model_dump()) for r in rules]
+    return RuleListResponse(rules=rule_items, total=len(rule_items))
+
+
+@router.get(
+    "/rules/{rule_id}",
+    response_model=RuleResponse,
+    tags=["Rules"],
+)
+def get_rule_by_id(
+    rule_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Retrieve a specific learned rule by ID."""
+    rule = service.repository.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rule '{rule_id}' not found.",
+        )
+    return RuleResponse.model_validate(rule.model_dump())
+
+
+@router.post(
+    "/rules/{rule_id}/toggle",
+    response_model=RuleToggleResponse,
+    tags=["Rules"],
+)
+def toggle_rule(
+    rule_id: str,
+    payload: RuleToggleRequest,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Activate or deactivate a learned reconciliation rule."""
+    rule = service.repository.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rule '{rule_id}' not found.",
+        )
+
+    updated_rule = service.repository.update_rule_active_state(rule_id, payload.is_active)
+    
+    event_type = "RULE_ACTIVATED" if payload.is_active else "RULE_DEACTIVATED"
+    if rule.source_correction_id:
+        corr = service.repository.get_correction(rule.source_correction_id)
+        if corr:
+            service.repository.save_audit_event(
+                corr.run_id,
+                event_type,
+                {"rule_id": rule_id, "is_active": payload.is_active},
+            )
+
+    return RuleToggleResponse(rule_id=rule_id, is_active=payload.is_active)
+
+

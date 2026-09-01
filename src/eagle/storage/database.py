@@ -179,6 +179,27 @@ class Database:
                     CREATE INDEX IF NOT EXISTS idx_audit_run ON audit_logs (run_id);
                     CREATE INDEX IF NOT EXISTS idx_corrections_run ON operator_corrections (run_id);
                     CREATE INDEX IF NOT EXISTS idx_corrections_rel ON operator_corrections (run_id, relationship_id);
+
+                    CREATE TABLE IF NOT EXISTS reconciliation_rules (
+                        rule_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        source_counterparty_pattern TEXT,
+                        reference_prefix TEXT,
+                        currency TEXT,
+                        max_amount_difference TEXT,
+                        max_settlement_delay_days INTEGER,
+                        target_action TEXT NOT NULL,
+                        resulting_outcome TEXT NOT NULL,
+                        resulting_exception_type TEXT,
+                        confidence REAL DEFAULT 1.0,
+                        is_active INTEGER DEFAULT 1,
+                        created_at TEXT NOT NULL,
+                        source_correction_id TEXT
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_rules_active ON reconciliation_rules (is_active);
+                    CREATE INDEX IF NOT EXISTS idx_rules_counterparty ON reconciliation_rules (source_counterparty_pattern);
                     """
                 )
         finally:
