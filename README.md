@@ -1,6 +1,7 @@
 # 🦅 Eagle — AI Financial Reconciliation Engine
 
-[![CI Tests](https://img.shields.io/badge/pytest-242%20passed-brightgreen.svg)]()
+[![CI Tests](https://img.shields.io/badge/pytest-321%20passed-brightgreen.svg)]()
+
 [![Benchmark F1](https://img.shields.io/badge/Benchmark%20F1-100.0%25-blue.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-Deterministic%20Core%20%2B%20AI%20Classifier-indigo.svg)]()
 [![License](https://img.shields.io/badge/License-Proprietary-gray.svg)]()
@@ -268,11 +269,53 @@ Measured on standard workstation hardware:
 | Reconciled Results Table Query | **3.9 ms** |
 | Candidate Tree Query | **3.8 ms** |
 | CSV Report Serialization | **3.3 ms** |
+| Candidate Tree Query | **3.8 ms** |
+| CSV Report Serialization | **3.3 ms** |
 | JSON Report Serialization | **2.7 ms** |
+| Vector Semantic Retrieval (`EagleVectorStore`) | **4.2 ms** |
+| Q&A Synthesis Latency | **0.5 - 25.0 ms** |
 
 ---
 
-## 10. Repository Structure
+## 10. Grounded RAG & ChromaDB Q&A Architecture
+
+Eagle incorporates a dedicated, grounded **Retrieval-Augmented Generation (RAG)** knowledge layer powered by **ChromaDB** and local CPU ONNX embeddings.
+
+```
+OPERATIONAL DATA (SQLite)
+├── runs
+├── records
+├── reconciliation_results
+├── operator_corrections
+├── reconciliation_rules
+└── audit_logs
+         ↓
+DocumentBuilder (Deterministic formatting + structured metadata)
+         ↓
+ChromaDB Persistent Collection ("eagle_operational_knowledge")
+         ↓
+EagleVectorStore (Idempotent Upsert & Cosine Semantic Search)
+         ↓
+EagleQAAgent (Retrieval Bounds + Grounding Prompt + Safety Invariants)
+         ↓
+REST API (POST /qa, POST /runs/{run_id}/qa) & Web Dashboard
+```
+
+### Key Architectural Invariants & Safety Guarantees:
+1. **Read-Only Separation**: RAG and Q&A are strictly explanation and retrieval layers. They have **zero decision authority** and cannot match transactions, create relationships, modify reconciliation outcomes, or bypass `GlobalCommitValidator`.
+2. **Deterministic Document IDs & Idempotency**: Re-indexing a run replaces documents deterministically (`run:{run_id}`, `result:{run_id}:{rel_id}`, `correction:{corr_id}`, `rule:{rule_id}`, `audit:{run_id}:{audit_id}`) without creating duplicates.
+3. **Strict Grounding**: The Q&A agent only answers from retrieved operational evidence. If no relevant evidence is retrieved or evidence is insufficient, it explicitly responds with `"I could not find sufficient evidence in Eagle's stored records to answer this question."`
+4. **Adversarial & Prompt-Injection Defense**: User prompts or stored text attempting to override system instructions (e.g. `"ignore previous instructions"`, `"invent a reconciliation result"`) are immediately refused.
+5. **100% Offline Local Architecture**: Uses local ONNX CPU embeddings and connects to external local `llama-server` (or deterministic offline mock provider for tests) with zero cloud network calls.
+
+### Q&A REST Endpoints:
+- `POST /qa`: Query across all indexed runs, rules, corrections, and audit events with optional run filter.
+- `POST /runs/{run_id}/qa`: Query scoped specifically to a single reconciliation run.
+- `POST /runs/{run_id}/index`: Manually index or re-index all operational entities for a run into ChromaDB.
+
+---
+
+## 11. Repository Structure
 
 ```
 Eagle/
@@ -294,21 +337,34 @@ Eagle/
 │       │   └── static/            # Self-contained Web Dashboard SPA
 │       │       ├── index.html     # Semantic HTML5 markup
 │       │       ├── styles.css     # Dark financial controller theme
-│       │       └── app.js         # Reactive UI client controller
+│       │       └── app.js         # Reactive UI client controller & Ask Eagle Q&A
 │       ├── core/                  # Configuration & logging
 │       ├── export/                # CSV & JSON export serializers
-│       ├── extraction/            # CSV & JSON extractors
+│       ├── extraction/            # CSV & JSON extractors & Multimodal router
 │       ├── models/                # Frozen domain contracts
+│       ├── rag/                   # Grounded RAG & ChromaDB Q&A layer
+│       │   ├── document_builder.py# Entity to Markdown document formatters
+│       │   ├── models.py          # RAG data schemas & Source attributions
+│       │   ├── qa_agent.py        # Grounded Q&A orchestrator & safety guards
+│       │   ├── qa_provider.py     # QA provider integration (llama-server / mock)
+│       │   └── vector_store.py    # ChromaDB persistent store & semantic search
 │       ├── reconciliation/        # Deterministic multi-stage matching engine
 │       │   ├── engine.py          # Stage 1-5 coordinator
 │       │   ├── aggregation.py     # 1:N / N:1 subset-sum solver
 │       │   └── matching.py        # Predicates for exact, fee, rounding
+│       ├── rules/                 # Generalized Rule Learning & Feedback Loop
+│       │   ├── models.py          # OperatorCorrection & ReconciliationRule
+│       │   ├── rule_synthesizer.py# Generalized predicate synthesizer
+│       │   └── rule_engine.py     # Learned rule candidate option evaluator
 │       ├── services/              # Application service boundary
 │       │   └── reconciliation_service.py
 │       └── storage/               # SQLite persistence layer
 │           ├── database.py        # ACID connection & schema
-│           └── repository.py      # Run, result, candidate, & audit CRUD
-├── tests/                         # 242 automated pytest tests
+│           └── repository.py      # Run, result, candidate, rule, & audit CRUD
+├── tests/                         # 321 automated pytest tests
+├── scratch/
+│   ├── demo_day2_rule_flow.py     # Day 2.1 Rule learning demonstration
+│   └── demo_day3_rag.py           # Day 3 Grounded RAG / Q&A demonstration
 ├── run_demo.py                    # Reviewer interactive launcher
 ├── README.md                      # Reviewer documentation
 ├── requirements.txt               # Python package dependencies
@@ -319,10 +375,10 @@ Eagle/
 
 ---
 
-## 11. Known Limitations & Deliberately Deferred Features
+## 12. Known Limitations & Deliberately Deferred Features
 
 To maintain high stability and zero scope creep during the buildathon submission window, the following capabilities were deliberately deferred to post-submission roadmaps:
 - **Cloud Deployment & Multi-Tenancy**: The current distribution is optimized for local workstation execution and reviewer demonstration.
 - **Model Migration to Qwen 3.5 9B**: Evaluated in architectural audits; deferred to avoid benchmark overfitting.
-- **OCR / Vision Ingestion**: PDF invoice parsing is staged for future enterprise ingestion pipelines.
-- **Vector Search (ChromaDB)**: Retrieval augmented rule synthesis is deferred to Phase 2.
+- **Direct ERP Webhook Listeners**: SAP and Oracle NetSuite webhooks staged for enterprise adapter phase.
+

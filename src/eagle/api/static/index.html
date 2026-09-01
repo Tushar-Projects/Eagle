@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20260901">
 </head>
 <body>
   <div id="app" class="app-layout">
@@ -61,7 +61,14 @@
           <span class="run-timestamp" id="displayRunTimestamp">--</span>
         </div>
         <div class="run-meta-right">
+          <button id="btnQuickAskEagle" class="btn btn-secondary" title="Ask grounded operational questions">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Ask Eagle
+          </button>
           <button id="btnExportCsv" class="btn btn-outline" disabled>
+
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
@@ -156,6 +163,12 @@
             <polyline points="12 6 12 12 16 14"/>
           </svg>
           Audit Trail (<span id="countAuditLogs">0</span>)
+        </button>
+        <button class="tab-btn" data-tab="tab-qa">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          Ask Eagle (Q&A)
         </button>
       </nav>
 
@@ -286,6 +299,59 @@
           <div class="empty-state">No audit events found.</div>
         </div>
       </section>
+
+      <!-- Tab 5: Grounded Q&A / Ask Eagle Panel -->
+      <section class="tab-pane" id="tab-qa">
+        <div class="qa-container">
+          <div class="qa-card">
+            <div class="qa-header-row">
+              <div class="qa-title-group">
+                <h3>
+                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                  Ask Eagle
+                </h3>
+                <p>Grounded natural-language operational assistant powered by ChromaDB.</p>
+              </div>
+              <div class="qa-scope-badge" id="qaScopeBadge">Scope: Current Run</div>
+            </div>
+
+            <div class="qa-suggestions">
+              <button type="button" class="qa-chip" data-query="What is the match rate for this run?">📊 Match Rate</button>
+              <button type="button" class="qa-chip" data-query="What exceptions occurred in this run?">⚠️ Exceptions</button>
+              <button type="button" class="qa-chip" data-query="Which learned reconciliation rules are active?">⚙️ Active Rules</button>
+              <button type="button" class="qa-chip" data-query="Why did the rerun improve reconciliation metrics?">🔄 Rerun Impact</button>
+              <button type="button" class="qa-chip" data-query="What happened to transaction BANK-C06?">🔍 BANK-C06 Record</button>
+            </div>
+
+            <form id="qaForm" class="qa-form">
+              <div class="qa-input-wrapper">
+                <svg class="qa-input-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="qaInput" class="qa-input" placeholder="Ask a question about runs, results, rules, or audit logs..." required autocomplete="off">
+              </div>
+              <button type="submit" class="btn btn-primary" id="btnSubmitQa">Ask</button>
+            </form>
+
+            <div class="qa-answer-section hidden" id="qaAnswerSection">
+              <div class="qa-answer-box" id="qaAnswerText">Generating answer...</div>
+              
+              <div class="qa-meta-bar">
+                <span id="qaLatencyMeta">Retrieval: -- | Generation: --</span>
+                <span id="qaEvidenceStatus">Grounded Evidence Verified</span>
+              </div>
+
+              <div>
+                <div class="qa-sources-title">Retrieved Evidence Sources:</div>
+                <div class="qa-sources-list" id="qaSourcesList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- Upload Modal -->
@@ -365,6 +431,7 @@
     <div class="toast-container" id="toastContainer"></div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260901"></script>
 </body>
+
 </html>

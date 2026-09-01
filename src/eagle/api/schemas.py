@@ -236,8 +236,50 @@ class RuleImpactResponse(BaseModel):
     delta: Optional[MetricDelta] = None
 
 
+# ---------------------------------------------------------------------------
+# Grounded Q&A / RAG Schemas
+# ---------------------------------------------------------------------------
+
+class SourceAttributionResponse(BaseModel):
+    """Attributed source document providing evidence for a Q&A answer."""
+    document_type: str
+    identifier: str
+    title: str
+    snippet: str
+    run_id: Optional[str] = None
+    relationship_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    correction_id: Optional[str] = None
+
+
+class QARequestPayload(BaseModel):
+    """Request body for grounded Q&A queries."""
+    question: str = Field(..., description="Natural language question about reconciliation runs or rules")
+    run_id: Optional[str] = Field(None, description="Optional run ID to scope retrieval")
+    max_sources: int = Field(5, description="Maximum number of grounded context documents to retrieve")
+
+
+class QAResponsePayload(BaseModel):
+    """Grounded answer with source citations."""
+    question: str
+    answer: str
+    sources: List[SourceAttributionResponse] = Field(default_factory=list)
+    run_id: Optional[str] = None
+    has_sufficient_evidence: bool = True
+    retrieval_latency_ms: float = 0.0
+    generation_latency_ms: float = 0.0
+
+
+class IndexRunResponse(BaseModel):
+    """Response after indexing operational run entities into ChromaDB."""
+    run_id: str
+    documents_indexed: int
+    status: str = "INDEXED"
+
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
     error: str
     detail: Optional[str] = None
+
 

@@ -87,7 +87,23 @@ const API = {
     if (!res.ok) throw new Error('Synthetic sample dataset unavailable');
     return await res.json();
   },
+
+  async askQa(question, runId = null) {
+    const payload = { question, run_id: runId };
+    const url = runId ? `/runs/${encodeURIComponent(runId)}/qa` : '/qa';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Q&A query error' }));
+      throw new Error(err.detail || 'Q&A query failed');
+    }
+    return await res.json();
+  },
 };
+
 
 // ---------------------------------------------------------------------------
 // 2. Application State
@@ -190,8 +206,14 @@ function renderActiveRunMeta() {
     time.textContent = '--';
     btnCsv.disabled = true;
     btnJson.disabled = true;
+
+    const scopeBadge = document.getElementById('qaScopeBadge');
+    if (scopeBadge) {
+      scopeBadge.textContent = 'Scope: All Runs (Global)';
+    }
     return;
   }
+
 
   title.textContent = state.activeRun.run_id;
   badge.textContent = state.activeRun.status;
@@ -413,12 +435,33 @@ function renderAuditTimeline() {
   });
 }
 
+function resetQaPanel() {
+
+  const qaSection = document.getElementById('qaAnswerSection');
+  const qaAnswerText = document.getElementById('qaAnswerText');
+  const qaSourcesList = document.getElementById('qaSourcesList');
+  const qaLatencyMeta = document.getElementById('qaLatencyMeta');
+  const qaEvidenceStatus = document.getElementById('qaEvidenceStatus');
+  const qaInput = document.getElementById('qaInput');
+
+  if (qaSection) qaSection.classList.add('hidden');
+  if (qaAnswerText) qaAnswerText.textContent = '';
+  if (qaSourcesList) qaSourcesList.innerHTML = '';
+  if (qaLatencyMeta) qaLatencyMeta.textContent = 'Retrieval: -- | Generation: --';
+  if (qaEvidenceStatus) qaEvidenceStatus.textContent = '';
+  if (qaInput) qaInput.value = '';
+}
+
+
 // ---------------------------------------------------------------------------
 // 5. Data Loading Orchestration
 // ---------------------------------------------------------------------------
 async function loadRunDetails(runId) {
   if (!runId) return;
   state.activeRunId = runId;
+
+  // Clear stale Q&A evidence immediately upon switching runs
+  resetQaPanel();
 
   try {
     const [run, metrics, resultsData, exceptionsData, candidatesData, auditData] = await Promise.all([
@@ -445,11 +488,18 @@ async function loadRunDetails(runId) {
     applyExceptionFilters();
     renderCandidateInspector();
     renderAuditTimeline();
+
+    const scopeBadge = document.getElementById('qaScopeBadge');
+    if (scopeBadge) {
+      scopeBadge.textContent = `Scope: ${runId}`;
+    }
   } catch (err) {
     console.error('Failed to load run details:', err);
     showToast(`Error loading run details: ${err.message}`, 'error');
   }
 }
+
+
 
 async function refreshAllRuns(selectFirst = false) {
   try {
@@ -665,6 +715,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       submitBtn.disabled = false;
     }
   });
+
+  // 12. Initialize Grounded Q&A Panel
+  initQaPanel();
 });
 
 function setupDropzone(zoneId, inputId, textId, infoId, onFileSelect) {
@@ -704,3 +757,132 @@ function setupDropzone(zoneId, inputId, textId, infoId, onFileSelect) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// 8. Grounded Q&A / Ask Eagle Panel Logic
+// ---------------------------------------------------------------------------
+function initQaPanel() {
+  const qaForm = document.getElementById('qaForm');
+  const qaInput = document.getElementById('qaInput');
+  const btnSubmit = document.getElementById('btnSubmitQa');
+  const qaSection = document.getElementById('qaAnswerSection');
+  const qaAnswerText = document.getElementById('qaAnswerText');
+  const qaLatencyMeta = document.getElementById('qaLatencyMeta');
+  const qaEvidenceStatus = document.getElementById('qaEvidenceStatus');
+  const qaSourcesList = document.getElementById('qaSourcesList');
+
+  if (!qaForm || !qaInput) return;
+
+  // Handle Query Submission
+  async function submitQuery(query) {
+    if (!query || !query.trim()) return;
+
+    qaSection.classList.remove('hidden');
+    qaAnswerText.textContent = 'Searching Eagle operational records and synthesizing grounded response...';
+    qaLatencyMeta.textContent = 'Retrieval: ... | Generation: ...';
+    qaEvidenceStatus.textContent = 'Verifying evidence...';
+    qaSourcesList.innerHTML = '';
+    btnSubmit.disabled = true;
+
+    try {
+      const response = await API.askQa(query.trim(), state.activeRunId || null);
+
+      qaAnswerText.textContent = response.answer;
+      qaLatencyMeta.textContent = `Retrieval: ${response.retrieval_latency_ms}ms | Generation: ${response.generation_latency_ms}ms`;
+
+      if (response.has_sufficient_evidence) {
+        qaEvidenceStatus.textContent = `✓ Grounded in ${response.sources.length} Verified Sources`;
+        qaEvidenceStatus.style.color = 'var(--accent-emerald)';
+      } else {
+        qaEvidenceStatus.textContent = '⚠️ Insufficient Evidence';
+        qaEvidenceStatus.style.color = 'var(--accent-amber)';
+      }
+
+      // Defensive Scope Validation for Run-Scoped Queries
+      if (state.activeRunId && response.sources && response.sources.length > 0) {
+        const crossRunSources = response.sources.filter(
+          s => s.run_id && s.run_id !== state.activeRunId
+        );
+        if (crossRunSources.length > 0) {
+          console.error(
+            `Q&A scope mismatch detected: expected run '${state.activeRunId}', but received evidence from run(s):`,
+            crossRunSources.map(s => s.run_id)
+          );
+          qaAnswerText.textContent =
+            'Q&A evidence scope mismatch. The retrieved evidence belongs to another reconciliation run.';
+          qaEvidenceStatus.textContent = 'Scope Mismatch Error';
+          qaEvidenceStatus.style.color = 'var(--accent-rose)';
+          qaSourcesList.innerHTML =
+            '<div style="font-size:0.85rem; color:var(--accent-rose); padding:0.5rem;">Evidence discarded due to cross-run scope mismatch.</div>';
+          return;
+        }
+      }
+
+      // Render Sources List
+      if (response.sources && response.sources.length > 0) {
+        qaSourcesList.innerHTML = response.sources.map(s => `
+          <div class="qa-source-card">
+            <div class="qa-source-header">
+              <span class="qa-source-badge">${s.document_type}</span>
+              <span class="qa-source-title">${s.title}</span>
+            </div>
+            <div class="qa-source-snippet">${s.snippet}</div>
+          </div>
+        `).join('');
+      } else {
+        qaSourcesList.innerHTML = '<div style="font-size:0.8rem; color:var(--text-muted);">No external source documents cited.</div>';
+      }
+
+
+    } catch (err) {
+      console.error(err);
+      qaAnswerText.textContent = `Error querying Eagle Q&A: ${err.message}`;
+      qaEvidenceStatus.textContent = 'Query Failed';
+      qaEvidenceStatus.style.color = 'var(--accent-rose)';
+    } finally {
+      btnSubmit.disabled = false;
+    }
+  }
+
+  qaForm.addEventListener('submit', e => {
+    e.preventDefault();
+    submitQuery(qaInput.value);
+  });
+
+  // Handle Example Chip Clicks
+  document.querySelectorAll('.qa-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const q = chip.dataset.query;
+      if (q) {
+        qaInput.value = q;
+        submitQuery(q);
+      }
+    });
+  });
+
+  // Handle Quick "Ask Eagle" Action Button in Active Run Header
+  const btnQuickAsk = document.getElementById('btnQuickAskEagle');
+  if (btnQuickAsk) {
+    btnQuickAsk.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+
+      const qaTabBtn = document.querySelector('.tab-btn[data-tab="tab-qa"]');
+      const qaPane = document.getElementById('tab-qa');
+      if (qaTabBtn) qaTabBtn.classList.add('active');
+      if (qaPane) qaPane.classList.add('active');
+
+      if (qaInput) {
+        qaInput.focus();
+      }
+    });
+  }
+
+  // Set initial Scope Badge
+  const scopeBadge = document.getElementById('qaScopeBadge');
+  if (scopeBadge && !state.activeRunId) {
+    scopeBadge.textContent = 'Scope: All Runs (Global)';
+  }
+}
+
+

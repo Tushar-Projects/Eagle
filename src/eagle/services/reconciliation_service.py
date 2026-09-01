@@ -60,6 +60,20 @@ class ReconciliationService:
         self.csv_extractor = CsvExtractor()
         self.router = router or ExtractorRouter()
 
+        # ChromaDB Vector Store & Grounded Q&A
+        from eagle.rag.vector_store import EagleVectorStore
+        from eagle.rag.qa_agent import EagleQAAgent
+        from eagle.rag.qa_provider import get_qa_provider
+
+        if self.settings.DATABASE_PATH == ":memory:":
+            self.vector_store = EagleVectorStore(chroma_path=":memory:")
+        else:
+            self.vector_store = EagleVectorStore(chroma_path=self.settings.CHROMADB_PATH)
+
+        qa_provider = get_qa_provider(self.settings)
+        self.qa_agent = EagleQAAgent(vector_store=self.vector_store, qa_provider=qa_provider)
+
+
     # -------------------------------------------------------------------------
     # Public Entry Points
     # -------------------------------------------------------------------------
@@ -314,6 +328,14 @@ class ReconciliationService:
                 },
             )
 
+            # 8. Auto-Index run entities into ChromaDB vector store
+            if self.vector_store:
+                try:
+                    metrics_calc = self.calculate_metrics(rid)
+                    self.vector_store.index_run(self.repository, rid, metrics=metrics_calc)
+                except Exception as e:
+                    logger.warning("Auto-indexing for run %s into ChromaDB failed: %s", rid, e)
+
             return {
                 "run_id": rid,
                 "status": "COMPLETED",
@@ -321,6 +343,7 @@ class ReconciliationService:
                 "results_count": len(final_results),
                 "candidates_count": len(engine_output.candidates),
             }
+
 
         except Exception as e:
             logger.exception("Reconciliation run %s failed: %s", rid, e)
@@ -604,3 +627,23 @@ class ReconciliationService:
             "value_weighted_match_rate": value_weighted_match_rate,
             "total_reconciled_amount": f"{total_reconciled_amount:.2f}",
         }
+
+    # -------------------------------------------------------------------------
+    # RAG / Q&A Integration
+    # -------------------------------------------------------------------------
+
+    def index_run(self, run_id: str) -> int:
+        """Index all operational data and relationships for a run into ChromaDB."""
+        if not self.vector_store:
+            return 0
+        metrics = self.calculate_metrics(run_id)
+        return self.vector_store.index_run(self.repository, run_id, metrics=metrics)
+
+    async def answer_question(self, question: str, run_id: Optional[str] = None, max_sources: int = 5):
+        """Answer an operational question grounded in ChromaDB vector records."""
+        from eagle.rag.models import QARequest
+        req = QARequest(question=question, run_id=run_id, max_sources=max_sources)
+        if not self.qa_agent:
+            raise RuntimeError("Q&A agent is not initialized.")
+        return await self.qa_agent.answer_question(req)
+
