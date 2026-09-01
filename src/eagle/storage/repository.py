@@ -13,7 +13,7 @@ from eagle.models.enums import (
     Severity,
 )
 from eagle.models.reconciliation import ReconciliationResult
-from eagle.rules.models import OperatorCorrection
+from eagle.rules.models import OperatorCorrection, ReconciliationRule
 from eagle.storage.database import Database
 
 
@@ -588,4 +588,118 @@ class Repository:
         finally:
             if not self.db._is_memory:
                 conn.close()
+
+    # -------------------------------------------------------------------------
+    # Reconciliation Rules
+    # -------------------------------------------------------------------------
+
+    def save_rule(self, rule: ReconciliationRule) -> None:
+        """Persist a learned reconciliation rule."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO reconciliation_rules (
+                    rule_id, name, description,
+                    source_counterparty_pattern, reference_prefix, currency,
+                    max_amount_difference, max_settlement_delay_days,
+                    target_action, resulting_outcome, resulting_exception_type,
+                    confidence, is_active, created_at, source_correction_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rule.rule_id,
+                    rule.name,
+                    rule.description,
+                    rule.source_counterparty_pattern,
+                    rule.reference_prefix,
+                    rule.currency,
+                    str(rule.max_amount_difference) if rule.max_amount_difference is not None else None,
+                    rule.max_settlement_delay_days,
+                    rule.target_action,
+                    rule.resulting_outcome,
+                    rule.resulting_exception_type,
+                    rule.confidence,
+                    1 if rule.is_active else 0,
+                    rule.created_at,
+                    rule.source_correction_id,
+                ),
+            )
+
+    def get_rule(self, rule_id: str) -> Optional[ReconciliationRule]:
+        """Retrieve a rule by its ID."""
+        conn = self.db.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM reconciliation_rules WHERE rule_id = ?",
+                (rule_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return ReconciliationRule(
+                rule_id=row["rule_id"],
+                name=row["name"],
+                description=row["description"],
+                source_counterparty_pattern=row["source_counterparty_pattern"],
+                reference_prefix=row["reference_prefix"],
+                currency=row["currency"],
+                max_amount_difference=Decimal(row["max_amount_difference"]) if row["max_amount_difference"] is not None else None,
+                max_settlement_delay_days=row["max_settlement_delay_days"],
+                target_action=row["target_action"],
+                resulting_outcome=row["resulting_outcome"],
+                resulting_exception_type=row["resulting_exception_type"],
+                confidence=row["confidence"],
+                is_active=bool(row["is_active"]),
+                created_at=row["created_at"],
+                source_correction_id=row["source_correction_id"],
+            )
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+
+    def get_rules(self, active_only: bool = False) -> List[ReconciliationRule]:
+        """Retrieve all reconciliation rules."""
+        conn = self.db.get_connection()
+        try:
+            if active_only:
+                rows = conn.execute(
+                    "SELECT * FROM reconciliation_rules WHERE is_active = 1 ORDER BY confidence DESC, created_at ASC"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM reconciliation_rules ORDER BY created_at DESC"
+                ).fetchall()
+
+            return [
+                ReconciliationRule(
+                    rule_id=row["rule_id"],
+                    name=row["name"],
+                    description=row["description"],
+                    source_counterparty_pattern=row["source_counterparty_pattern"],
+                    reference_prefix=row["reference_prefix"],
+                    currency=row["currency"],
+                    max_amount_difference=Decimal(row["max_amount_difference"]) if row["max_amount_difference"] is not None else None,
+                    max_settlement_delay_days=row["max_settlement_delay_days"],
+                    target_action=row["target_action"],
+                    resulting_outcome=row["resulting_outcome"],
+                    resulting_exception_type=row["resulting_exception_type"],
+                    confidence=row["confidence"],
+                    is_active=bool(row["is_active"]),
+                    created_at=row["created_at"],
+                    source_correction_id=row["source_correction_id"],
+                )
+                for row in rows
+            ]
+        finally:
+            if not self.db._is_memory:
+                conn.close()
+
+    def update_rule_active_state(self, rule_id: str, is_active: bool) -> Optional[ReconciliationRule]:
+        """Activate or deactivate a rule."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE reconciliation_rules SET is_active = ? WHERE rule_id = ?",
+                (1 if is_active else 0, rule_id),
+            )
+        return self.get_rule(rule_id)
+
 

@@ -19,6 +19,7 @@ from eagle.models.enums import ExceptionType, ReconciliationOutcome
 from eagle.models.evidence import CandidateRelationshipEvidence, EngineOutput
 from eagle.models.reconciliation import ReconciliationResult
 from eagle.reconciliation.engine import reconcile
+from eagle.rules.rule_engine import RuleEngine
 from eagle.storage.database import Database
 from eagle.storage.repository import Repository
 
@@ -152,15 +153,17 @@ class ReconciliationService:
         sources: List[CanonicalRecord],
         targets: List[CanonicalRecord],
         run_id: Optional[str] = None,
+        apply_rules: bool = True,
     ) -> dict:
         """Synchronous wrapper for running reconciliation on pre-extracted records."""
-        return asyncio.run(self.reconcile_records_async(sources, targets, run_id))
+        return asyncio.run(self.reconcile_records_async(sources, targets, run_id, apply_rules=apply_rules))
 
     async def reconcile_records_async(
         self,
         sources: List[CanonicalRecord],
         targets: List[CanonicalRecord],
         run_id: Optional[str] = None,
+        apply_rules: bool = True,
     ) -> dict:
         """Asynchronously execute reconciliation lifecycle with full persistence."""
         rid = run_id or generate_run_id()
@@ -205,13 +208,44 @@ class ReconciliationService:
                 },
             )
 
+            # 3.5. Learned Rule Resolution Layer (Guarded by GlobalCommitValidator)
+            rule_results: List[ReconciliationResult] = []
+            remaining_candidates = engine_output.candidates
+
+            if apply_rules:
+                active_rules = self.repository.get_rules(active_only=True)
+                if active_rules:
+                    rule_results, remaining_candidates, rule_events = RuleEngine.evaluate(
+                        engine_output=engine_output,
+                        source_records=sources,
+                        target_records=targets,
+                        active_rules=active_rules,
+                        committed_results=engine_output.results,
+                    )
+                    for ev in rule_events:
+                        self.repository.save_audit_event(rid, ev["event"], ev)
+
+                    if rule_results:
+                        self.repository.save_audit_event(
+                            rid,
+                            "RULE_APPLICATION_COMPLETED",
+                            {
+                                "resolved_count": len(rule_results),
+                                "remaining_candidates": len(remaining_candidates),
+                            },
+                        )
+
             # 4. AI Exception Classification & Candidate Selection
+            classifier_input = EngineOutput(
+                results=engine_output.results + rule_results,
+                candidates=remaining_candidates,
+            )
             classifier = AIExceptionClassifier(
                 provider=self.provider,
                 max_retries=self.settings.AI_MAX_RETRIES,
                 max_concurrency=self.settings.AI_MAX_CONCURRENCY,
             )
-            classifier_output = await classifier.classify_all(engine_output, sources, targets)
+            classifier_output = await classifier.classify_all(classifier_input, sources, targets)
             self.repository.save_audit_event(
                 rid,
                 "AI_CLASSIFICATION_COMPLETED",
@@ -221,16 +255,16 @@ class ReconciliationService:
                 },
             )
 
-            # 5. Merge Outputs
+            # 5. Merge Outputs (Deterministic + Rule Results + AI Results)
             final_results = self._merge_results(
-                engine_results=engine_output.results,
+                engine_results=engine_output.results + rule_results,
                 ai_results=classifier_output.classified_results,
             )
 
             # 6. Extract Candidate Decision Metadata for Auditing
             candidate_decisions = self._build_candidate_decisions(
                 candidates=engine_output.candidates,
-                classified_results=classifier_output.classified_results,
+                classified_results=rule_results + classifier_output.classified_results,
                 failed_cases=classifier_output.failed_cases,
             )
 
@@ -338,7 +372,22 @@ class ReconciliationService:
             key = (frozenset(r.source_record_ids), frozenset(r.target_record_ids))
             final_dict[key] = r
 
+        # Ensure any multi-participant committed result supersedes standalone orphan records
+        committed_sources = {sid for r in final_dict.values() if r.outcome == ReconciliationOutcome.MATCHED for sid in r.source_record_ids}
+        committed_targets = {tid for r in final_dict.values() if r.outcome == ReconciliationOutcome.MATCHED for tid in r.target_record_ids}
+
+        for sid in committed_sources:
+            orphan_key = (frozenset([sid]), frozenset([]))
+            if orphan_key in final_dict and len(final_dict[orphan_key].target_record_ids) == 0:
+                del final_dict[orphan_key]
+
+        for tid in committed_targets:
+            orphan_key = (frozenset([]), frozenset([tid]))
+            if orphan_key in final_dict and len(final_dict[orphan_key].source_record_ids) == 0:
+                del final_dict[orphan_key]
+
         return list(final_dict.values())
+
 
     def _build_candidate_decisions(
         self,

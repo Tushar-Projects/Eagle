@@ -150,6 +150,92 @@ class CorrectionListResponse(BaseModel):
     total: int
 
 
+# ---------------------------------------------------------------------------
+# Reconciliation Rules
+# ---------------------------------------------------------------------------
+
+class RuleResponse(BaseModel):
+    """Response model representing a learned reconciliation rule."""
+    rule_id: str
+    name: str
+    description: str
+    source_counterparty_pattern: Optional[str] = None
+    reference_prefix: Optional[str] = None
+    currency: Optional[str] = None
+    max_amount_difference: Optional[Decimal] = None
+    max_settlement_delay_days: Optional[int] = None
+    target_action: str = "PREFER_CANDIDATE"
+    resulting_outcome: str = "MATCHED"
+    resulting_exception_type: Optional[str] = None
+    confidence: float = 1.0
+    is_active: bool = True
+    created_at: str
+    source_correction_id: Optional[str] = None
+
+
+class RuleListResponse(BaseModel):
+    """Response model containing a list of learned rules."""
+    rules: List[RuleResponse]
+    total: int
+
+
+class RuleToggleRequest(BaseModel):
+    """Request payload to toggle active status of a rule."""
+    is_active: bool
+
+
+class RuleToggleResponse(BaseModel):
+    """Response model after toggling a rule's active state."""
+    rule_id: str
+    is_active: bool
+
+
+# ---------------------------------------------------------------------------
+# Rerun & Rule Impact
+# ---------------------------------------------------------------------------
+
+class RerunRequest(BaseModel):
+    """Request payload to rerun reconciliation on an existing run's records."""
+    apply_rules: bool = Field(True, description="Whether to apply active learned rules during rerun")
+
+
+class RerunResponse(BaseModel):
+    """Response model after executing a rerun."""
+    parent_run_id: str
+    rerun_id: str
+    status: str
+    apply_rules: bool
+    summary: RunMetricsResponse
+
+
+class MetricSnapshot(BaseModel):
+    """Snapshot of metrics for before/after comparison."""
+    run_id: str
+    match_rate: float
+    value_weighted_match_rate: float
+    matched_count: int
+    exception_count: int
+    unresolved_count: int
+    total_reconciled_amount: str
+
+
+class MetricDelta(BaseModel):
+    """Delta between before and after reconciliation runs."""
+    match_rate_improvement: float
+    value_weighted_improvement: float
+    resolved_exceptions: int
+    reconciled_amount_change: str
+
+
+class RuleImpactResponse(BaseModel):
+    """Detailed before-and-after impact comparison of learned rules on a run."""
+    run_id: str
+    has_rerun: bool
+    before: Optional[MetricSnapshot] = None
+    after: Optional[MetricSnapshot] = None
+    delta: Optional[MetricDelta] = None
+
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
     error: str
