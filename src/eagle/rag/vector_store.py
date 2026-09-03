@@ -72,32 +72,20 @@ class EagleVectorStore:
         )
         return len(documents)
 
-    def search(
+    def _query_collection(
         self,
         query: str,
-        run_id: Optional[str] = None,
-        document_type: Optional[str] = None,
-        limit: int = 5,
+        where_clause: Optional[Dict[str, Any]],
+        limit: int,
     ) -> List[SearchResult]:
-        """Perform semantic search over operational documents with optional metadata filtering."""
-        where_clause: Optional[Dict[str, Any]] = None
-
-        filters = []
-        if run_id:
-            filters.append({"run_id": run_id})
-        if document_type:
-            filters.append({"document_type": document_type})
-
-        if len(filters) == 1:
-            where_clause = filters[0]
-        elif len(filters) > 1:
-            where_clause = {"$and": filters}
-
+        """Internal helper to execute a query against ChromaDB collection."""
         total_docs = self._collection.count()
         if total_docs == 0:
             return []
 
         actual_limit = min(limit, total_docs)
+        if actual_limit <= 0:
+            return []
 
         query_kwargs: Dict[str, Any] = {
             "query_texts": [query],
@@ -111,7 +99,6 @@ class EagleVectorStore:
         except Exception as e:
             logger.warning("Vector search query error with filter %s: %s", where_clause, e)
             return []
-
 
         search_results: List[SearchResult] = []
         if not results or not results["ids"] or not results["ids"][0]:
@@ -133,6 +120,91 @@ class EagleVectorStore:
             )
 
         return search_results
+
+    def search(
+        self,
+        query: str,
+        run_id: Optional[str] = None,
+        document_type: Optional[str] = None,
+        knowledge_scope: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[SearchResult]:
+        """Perform semantic search over operational documents with knowledge-scope awareness.
+
+        Semantics:
+        - Unscoped query (run_id is None, knowledge_scope is None):
+            Searches across both GLOBAL and RUN knowledge.
+        - Explicit knowledge_scope (e.g. "GLOBAL" or "RUN"):
+            Filters strictly by that knowledge scope.
+        - Run-scoped query (run_id provided, knowledge_scope is None):
+            Retrieves relevant documents matching:
+                (knowledge_scope == "RUN" AND run_id == requested_run_id)
+                OR
+                (knowledge_scope == "GLOBAL")
+            Executed as two controlled searches to ensure complete run isolation
+            without relying on complex multi-clause Chroma filters.
+        """
+        total_docs = self._collection.count()
+        if total_docs == 0:
+            return []
+
+        # Case 1: Explicit knowledge_scope requested
+        if knowledge_scope == "GLOBAL":
+            filters: List[Dict[str, Any]] = [{"knowledge_scope": "GLOBAL"}]
+            if document_type:
+                filters.append({"document_type": document_type})
+            where = {"$and": filters} if len(filters) > 1 else filters[0]
+            return self._query_collection(query, where, limit)
+
+        if knowledge_scope == "RUN":
+            filters = [{"knowledge_scope": "RUN"}]
+            if run_id:
+                filters.append({"run_id": run_id})
+            if document_type:
+                filters.append({"document_type": document_type})
+            where = {"$and": filters} if len(filters) > 1 else filters[0]
+            return self._query_collection(query, where, limit)
+
+        # Case 2: Run-scoped query (run_id provided, knowledge_scope is None)
+        if run_id:
+            # Search 1: RUN-scoped documents for this specific run_id
+            run_filters: List[Dict[str, Any]] = [
+                {"knowledge_scope": "RUN"},
+                {"run_id": run_id},
+            ]
+            if document_type:
+                run_filters.append({"document_type": document_type})
+            where_run = {"$and": run_filters}
+            run_results = self._query_collection(query, where_run, limit)
+
+            # Search 2: GLOBAL knowledge (learned rules)
+            global_filters: List[Dict[str, Any]] = [{"knowledge_scope": "GLOBAL"}]
+            if document_type:
+                global_filters.append({"document_type": document_type})
+            where_global = {"$and": global_filters} if len(global_filters) > 1 else global_filters[0]
+            global_results = self._query_collection(query, where_global, limit)
+
+            # Merge, deduplicate by document ID, and rank by semantic distance (ascending)
+            seen_ids = set()
+            combined: List[SearchResult] = []
+            for item in run_results + global_results:
+                if item.id not in seen_ids:
+                    seen_ids.add(item.id)
+                    combined.append(item)
+
+            combined.sort(key=lambda x: x.distance)
+            return combined[:limit]
+
+        # Case 3: Unscoped query (run_id is None, knowledge_scope is None)
+        unscoped_filters: List[Dict[str, Any]] = []
+        if document_type:
+            unscoped_filters.append({"document_type": document_type})
+        where_unscoped = (
+            {"$and": unscoped_filters}
+            if len(unscoped_filters) > 1
+            else (unscoped_filters[0] if unscoped_filters else None)
+        )
+        return self._query_collection(query, where_unscoped, limit)
 
     def index_run(self, repository: Repository, run_id: str, metrics: Optional[dict] = None) -> int:
         """Index all operational entities for a run into ChromaDB."""

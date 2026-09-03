@@ -98,6 +98,7 @@ class EagleQAAgent:
             corr_id = res.metadata.get("correction_id")
             rule_id = res.metadata.get("rule_id")
             run_id_val = res.metadata.get("run_id")
+            scope_val = res.metadata.get("knowledge_scope", "GLOBAL" if doc_type == "RULE" else "RUN")
 
             # Defensively enforce run-scoping: exclude any document carrying a different run_id
             if request.run_id and run_id_val and run_id_val != request.run_id:
