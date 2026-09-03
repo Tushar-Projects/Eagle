@@ -190,6 +190,31 @@ class RuleToggleResponse(BaseModel):
     is_active: bool
 
 
+class RuleCreateRequest(BaseModel):
+    """Request payload to manually define a structured reconciliation rule."""
+    name: str = Field(..., min_length=3, max_length=120)
+    description: Optional[str] = ""
+    source_counterparty_pattern: Optional[str] = None
+    reference_prefix: Optional[str] = None
+    currency: Optional[str] = None
+    max_amount_difference: Optional[Decimal] = None
+    max_settlement_delay_days: Optional[int] = None
+    target_action: str = Field("PREFER_CANDIDATE", description="Action when rule matches")
+    resulting_outcome: str = Field("MATCHED", description="Outcome: MATCHED or EXCEPTION")
+    resulting_exception_type: Optional[str] = None
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
+    is_active: bool = True
+    run_id: Optional[str] = Field(None, description="Optional run context for audit logging")
+
+
+class RuleValidationResponse(BaseModel):
+    """Validation response for a proposed structured rule."""
+    valid: bool
+    summary: str
+    errors: List[str] = Field(default_factory=list)
+
+
+
 # ---------------------------------------------------------------------------
 # Rerun & Rule Impact
 # ---------------------------------------------------------------------------

@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
+import re
 import uuid
+
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import Response
@@ -27,11 +29,14 @@ from eagle.api.schemas import (
     RerunRequest,
     RerunResponse,
     ResultsListResponse,
+    RuleCreateRequest,
     RuleImpactResponse,
     RuleListResponse,
     RuleResponse,
     RuleToggleRequest,
     RuleToggleResponse,
+    RuleValidationResponse,
+
     RunListResponse,
     RunMetricsResponse,
     RunResponse,
@@ -217,9 +222,46 @@ def get_run(
     return RunResponse.model_validate(run)
 
 
+@router.get("/runs/{run_id}/records", tags=["Runs"])
+def get_run_records(
+    run_id: str,
+    source: Optional[str] = Query(None, description="Filter by source (GATEWAY or BANK)"),
+    service: ReconciliationService = Depends(get_service),
+):
+    """Retrieve all ingested canonical records for a run."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+    records = service.repository.get_records(run_id, source=source)
+    return {
+        "run_id": run_id,
+        "total": len(records),
+        "records": [
+            {
+                "record_id": r.record_id,
+                "transaction_id": r.transaction_id,
+                "source": r.source,
+                "source_reference": r.source_reference,
+                "amount": str(r.amount),
+                "currency": r.currency,
+                "transaction_date": str(r.transaction_date),
+                "settlement_date": str(r.settlement_date) if r.settlement_date else None,
+                "counterparty": r.counterparty,
+                "status": r.status,
+                "transaction_type": r.transaction_type,
+            }
+            for r in records
+        ],
+    }
+
+
 # -------------------------------------------------------------------------
 # Results & Exceptions
 # -------------------------------------------------------------------------
+
 
 @router.get(
     "/runs/{run_id}/results",
@@ -1002,6 +1044,163 @@ def toggle_rule(
             )
 
     return RuleToggleResponse(rule_id=rule_id, is_active=payload.is_active)
+
+
+@router.post(
+    "/rules/validate",
+    response_model=RuleValidationResponse,
+    tags=["Rules"],
+)
+def validate_rule(
+    payload: RuleCreateRequest,
+):
+    """Validate a structured rule definition without saving."""
+    errors = []
+
+    # Check for non-memorizing counterparty (e.g. must not be a specific record ID pattern like GTW-001 or BANK-001)
+    cp = payload.source_counterparty_pattern.strip() if payload.source_counterparty_pattern else None
+    if cp and re.match(r"^(GTW|BANK|TXN|REC)[-_]\d+$", cp, re.IGNORECASE):
+        errors.append(f"Counterparty pattern '{cp}' appears to be a specific record ID. Generalized patterns must not memorize exact record IDs.")
+
+    # Check resulting outcome & exception type
+    if payload.resulting_outcome not in {"MATCHED", "EXCEPTION"}:
+        errors.append(f"Invalid resulting outcome '{payload.resulting_outcome}'. Must be 'MATCHED' or 'EXCEPTION'.")
+
+    if payload.resulting_outcome == "EXCEPTION" and payload.resulting_exception_type:
+        try:
+            ExceptionType(payload.resulting_exception_type)
+        except ValueError:
+            errors.append(f"Invalid exception type '{payload.resulting_exception_type}'.")
+
+    # Construct ReconciliationRule in memory to test validators
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        ReconciliationRule(
+            rule_id="RULE-VALIDATE-TEST",
+            name=payload.name.strip(),
+            description=payload.description.strip() if payload.description else "",
+            source_counterparty_pattern=cp,
+            reference_prefix=payload.reference_prefix.strip() if payload.reference_prefix else None,
+            currency=payload.currency.strip().upper() if payload.currency else None,
+            max_amount_difference=payload.max_amount_difference,
+            max_settlement_delay_days=payload.max_settlement_delay_days,
+            target_action=payload.target_action,
+            resulting_outcome=payload.resulting_outcome,
+            resulting_exception_type=payload.resulting_exception_type,
+            confidence=payload.confidence,
+            is_active=payload.is_active,
+            created_at=now_iso,
+            source_correction_id=None,
+        )
+    except Exception as e:
+        errors.append(str(e))
+
+    if errors:
+        return RuleValidationResponse(
+            valid=False,
+            summary="Rule validation failed. Please address the errors below.",
+            errors=errors,
+        )
+
+    # Build formatted preview summary
+    predicates = []
+    if cp:
+        predicates.append(f"Counterparty = {cp}")
+    if payload.currency:
+        predicates.append(f"Currency = {payload.currency.strip().upper()}")
+    if payload.max_amount_difference is not None:
+        predicates.append(f"Max Amount Difference = ₹{payload.max_amount_difference}")
+    if payload.max_settlement_delay_days is not None:
+        predicates.append(f"Max Settlement Delay = {payload.max_settlement_delay_days} day(s)")
+    if payload.reference_prefix:
+        predicates.append(f"Reference Prefix = {payload.reference_prefix.strip()}")
+
+    summary = f"Valid generalized rule. Predicates: {', '.join(predicates) if predicates else 'Wildcard'}. Outcome: {payload.resulting_outcome}."
+    return RuleValidationResponse(
+        valid=True,
+        summary=summary,
+        errors=[],
+    )
+
+
+@router.post(
+    "/rules",
+    response_model=RuleResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Rules"],
+)
+def create_rule(
+    payload: RuleCreateRequest,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Manually create and persist a structured, generalized reconciliation rule."""
+    cp = payload.source_counterparty_pattern.strip() if payload.source_counterparty_pattern else None
+    if cp and re.match(r"^(GTW|BANK|TXN|REC)[-_]\d+$", cp, re.IGNORECASE):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Counterparty pattern '{cp}' appears to be a specific record ID. Rules must not memorize exact record IDs.",
+        )
+
+    if payload.resulting_outcome not in {"MATCHED", "EXCEPTION"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid resulting outcome '{payload.resulting_outcome}'. Must be 'MATCHED' or 'EXCEPTION'.",
+        )
+
+    if payload.resulting_outcome == "EXCEPTION" and payload.resulting_exception_type:
+        try:
+            ExceptionType(payload.resulting_exception_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid exception type '{payload.resulting_exception_type}'.",
+            )
+
+    rule_id = f"RULE-{uuid.uuid4().hex[:8].upper()}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        rule = ReconciliationRule(
+            rule_id=rule_id,
+            name=payload.name.strip(),
+            description=payload.description.strip() if payload.description else "",
+            source_counterparty_pattern=cp,
+            reference_prefix=payload.reference_prefix.strip() if payload.reference_prefix else None,
+            currency=payload.currency.strip().upper() if payload.currency else None,
+            max_amount_difference=payload.max_amount_difference,
+            max_settlement_delay_days=payload.max_settlement_delay_days,
+            target_action=payload.target_action,
+            resulting_outcome=payload.resulting_outcome,
+            resulting_exception_type=payload.resulting_exception_type,
+            confidence=payload.confidence,
+            is_active=payload.is_active,
+            created_at=now_iso,
+            source_correction_id=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Rule validation failed: {e}",
+        )
+
+    service.repository.save_rule(rule)
+
+    if payload.run_id:
+        run = service.repository.get_run(payload.run_id)
+        if run:
+            service.repository.save_audit_event(
+                payload.run_id,
+                "RULE_CREATED",
+                {
+                    "rule_id": rule.rule_id,
+                    "name": rule.name,
+                    "confidence": rule.confidence,
+                    "created_by": "OPERATOR_STRUCTURED_BUILDER",
+                },
+            )
+
+    return RuleResponse.model_validate(rule.model_dump())
+
 
 
 # ---------------------------------------------------------------------------

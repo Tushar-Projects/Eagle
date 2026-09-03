@@ -57,6 +57,13 @@ class RuleSynthesizer:
             clean_prefix = re.sub(r"\d+$", "", common)
             if len(clean_prefix) >= 3:
                 ref_prefix = clean_prefix
+        elif active_targets:
+            target_refs = [r.source_reference.strip() for r in active_targets if r.source_reference and r.source_reference.strip()]
+            if target_refs:
+                common = os.path.commonprefix(target_refs)
+                clean_prefix = re.sub(r"\d+$", "", common)
+                if len(clean_prefix) >= 3:
+                    ref_prefix = clean_prefix
 
         # 4. Extract Common Currency
         currency: Optional[str] = None

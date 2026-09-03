@@ -15,10 +15,11 @@ from eagle.extraction.csv_extractor import CsvExtractor
 from eagle.extraction.models import DocumentExtractionResult
 from eagle.extraction.router import ExtractorRouter
 from eagle.models.canonical import CanonicalRecord
-from eagle.models.enums import ExceptionType, ReconciliationOutcome
+from eagle.models.enums import ExceptionType, ReconciliationOutcome, RelationshipType, Severity
 from eagle.models.evidence import CandidateRelationshipEvidence, EngineOutput
 from eagle.models.reconciliation import ReconciliationResult
 from eagle.reconciliation.engine import reconcile
+from eagle.reconciliation.utils import generate_relationship_id
 from eagle.rules.rule_engine import RuleEngine
 from eagle.storage.database import Database
 from eagle.storage.repository import Repository
@@ -273,6 +274,8 @@ class ReconciliationService:
             final_results = self._merge_results(
                 engine_results=engine_output.results + rule_results,
                 ai_results=classifier_output.classified_results,
+                sources=sources,
+                targets=targets,
             )
 
             # 6. Extract Candidate Decision Metadata for Auditing
@@ -367,10 +370,13 @@ class ReconciliationService:
         self,
         engine_results: List[ReconciliationResult],
         ai_results: List[ReconciliationResult],
+        sources: Optional[List[CanonicalRecord]] = None,
+        targets: Optional[List[CanonicalRecord]] = None,
     ) -> List[ReconciliationResult]:
         """Merge deterministic results with AI-classified and resolved candidate results.
 
         Orphaned records superseded by committed candidate selections are cleanly removed.
+        Any unselected/uncommitted candidate participants become MISSING_RECORD exceptions.
         """
         final_dict: dict[tuple[frozenset[str], frozenset[str]], ReconciliationResult] = {}
 
@@ -457,6 +463,14 @@ class ReconciliationService:
                     break
 
             if matched_result is not None:
+                prov_str = str(getattr(matched_result, "provenance", "") or "").lower()
+                if "rule" in prov_str:
+                    reasoning_text = "Learned rule matched and committed candidate option."
+                elif len(cand.candidate_options) == 1:
+                    reasoning_text = "Deterministic candidate option selected and committed."
+                else:
+                    reasoning_text = "Candidate option selected and committed."
+
                 decisions.append(
                     {
                         "anchor_record_id": anchor_id,
@@ -473,7 +487,7 @@ class ReconciliationService:
                             else (str(matched_result.exception_type) if matched_result.exception_type else None)
                         ),
                         "confidence": 1.0,
-                        "reasoning": "Deterministic candidate option selected and committed.",
+                        "reasoning": reasoning_text,
                         "validation_status": "COMMITTED",
                         "rejection_reason": None,
                     }

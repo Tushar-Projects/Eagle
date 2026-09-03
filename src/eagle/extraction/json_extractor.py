@@ -127,7 +127,15 @@ class JsonExtractor:
 
             if effective_type == "GATEWAY":
                 record_id = self._get_required(row, ["payment_id", "record_id", "transaction_id"], idx)
-                reference = str(row.get("merchant_txn_ref") or row.get("source_reference") or "")
+                reference = str(
+                    row.get("merchant_txn_ref")
+                    or row.get("source_reference")
+                    or row.get("reference")
+                    or row.get("ref")
+                    or row.get("txn_ref")
+                    or row.get("external_ref")
+                    or ""
+                )
                 amount = self._parse_decimal(self._get_required(row, ["amount"], idx), "amount", idx)
                 currency = str(row.get("currency") or "INR").upper().strip()
                 
@@ -159,7 +167,14 @@ class JsonExtractor:
 
             elif effective_type == "BANK":
                 record_id = self._get_required(row, ["bank_reference", "record_id", "transaction_id"], idx)
-                reference = str(row.get("narration") or row.get("source_reference") or "")
+                reference = str(
+                    row.get("narration")
+                    or row.get("source_reference")
+                    or row.get("reference")
+                    or row.get("ref")
+                    or row.get("txn_ref")
+                    or ""
+                )
                 amount_val = self._get_required(row, ["settlement_amount", "amount"], idx)
                 amount = self._parse_decimal(amount_val, "settlement_amount", idx)
                 currency = str(row.get("currency") or "INR").upper().strip()
@@ -168,7 +183,7 @@ class JsonExtractor:
                 settle_date = self._parse_date(date_val, "posting_date", idx)
                 txn_date = settle_date
 
-                counterparty = str(row.get("counterparty") or "")
+                counterparty = str(row.get("counterparty") or row.get("merchant_name") or "")
                 fee_amount = self._parse_optional_decimal(row.get("fee") or row.get("fee_amount"), "fee", idx)
                 txn_type = "CREDIT" if amount >= Decimal("0.00") else "DEBIT"
 
@@ -191,7 +206,15 @@ class JsonExtractor:
                 record_id = self._get_required(row, ["record_id", "transaction_id"], idx)
                 transaction_id = str(row.get("transaction_id") or record_id)
                 source = str(row.get("source") or "MANUAL").upper().strip()
-                source_reference = str(row.get("source_reference") or row.get("reference") or "")
+                source_reference = str(
+                    row.get("source_reference")
+                    or row.get("reference")
+                    or row.get("merchant_txn_ref")
+                    or row.get("narration")
+                    or row.get("ref")
+                    or row.get("txn_ref")
+                    or ""
+                )
                 amount = self._parse_decimal(self._get_required(row, ["amount"], idx), "amount", idx)
                 currency = str(row.get("currency") or "INR").upper().strip()
 
