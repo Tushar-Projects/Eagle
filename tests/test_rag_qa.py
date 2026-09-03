@@ -197,6 +197,7 @@ def test_document_builder_run():
     doc = DocumentBuilder.build_run_document(run_dict, metrics)
     assert doc.id == "run:RUN-DEMO-01"
     assert doc.metadata["document_type"] == "RUN"
+    assert doc.metadata["knowledge_scope"] == "RUN"
     assert doc.metadata["run_id"] == "RUN-DEMO-01"
     assert doc.metadata["match_rate"] == 80.0
     assert "Reconciliation Performance" in doc.text
@@ -241,7 +242,9 @@ def test_document_builder_result():
     doc = DocumentBuilder.build_result_document("RUN-1", res, s_map, t_map)
     assert doc.id == "result:RUN-1:REL-999"
     assert doc.metadata["document_type"] == "RESULT"
+    assert doc.metadata["knowledge_scope"] == "RUN"
     assert doc.metadata["relationship_id"] == "REL-999"
+    assert doc.metadata["run_id"] == "RUN-1"
     assert "Acme Corp" in doc.text
     assert "INR 1500.00" in doc.text
 
@@ -256,7 +259,6 @@ def test_document_builder_rule():
         max_amount_difference=Decimal("2.00"),
         target_action="PREFER_CANDIDATE",
         resulting_outcome="MATCHED",
-
         resulting_exception_type="FEE_DEDUCTION",
         confidence=1.0,
         is_active=True,
@@ -265,6 +267,8 @@ def test_document_builder_rule():
     doc = DocumentBuilder.build_rule_document(rule)
     assert doc.id == "rule:RULE-FEE-01"
     assert doc.metadata["document_type"] == "RULE"
+    assert doc.metadata["knowledge_scope"] == "GLOBAL"
+    assert "run_id" not in doc.metadata
     assert doc.metadata["is_active"] is True
     assert "Stripe" in doc.text
     assert "INR 2.00" in doc.text
@@ -302,8 +306,9 @@ def test_vector_store_metadata_filtering(vector_store, repo, sample_data):
     assert len(results_rule) > 0
     for r in results_rule:
         assert r.metadata["document_type"] == "RULE"
+        assert r.metadata["knowledge_scope"] == "GLOBAL"
 
-    # Search with run_id filter
+    # Search with run_id filter (hybrid run-scoped search returns run docs + relevant global rules)
     results_run = vector_store.search(
         query="reconciliation performance",
         run_id=run_id,
@@ -311,6 +316,22 @@ def test_vector_store_metadata_filtering(vector_store, repo, sample_data):
     )
     assert len(results_run) > 0
     for r in results_run:
+        if r.metadata.get("knowledge_scope") == "RUN":
+            assert r.metadata["run_id"] == run_id
+        else:
+            assert r.metadata["knowledge_scope"] == "GLOBAL"
+            assert "run_id" not in r.metadata
+
+    # Search with explicit knowledge_scope="RUN"
+    results_run_only = vector_store.search(
+        query="reconciliation performance",
+        run_id=run_id,
+        knowledge_scope="RUN",
+        limit=5,
+    )
+    assert len(results_run_only) > 0
+    for r in results_run_only:
+        assert r.metadata["knowledge_scope"] == "RUN"
         assert r.metadata["run_id"] == run_id
 
 
@@ -320,9 +341,13 @@ def test_vector_store_delete_run(vector_store, repo, sample_data):
     assert vector_store.count() > 0
 
     vector_store.delete_run(run_id)
-    # Run docs deleted
-    run_results = vector_store.search(query="RUN-TEST-001", run_id=run_id)
+    # Run docs deleted (no RUN-scoped docs for this run)
+    run_results = vector_store.search(query="reconciliation performance", run_id=run_id, knowledge_scope="RUN")
     assert len(run_results) == 0
+
+    # Global rules remain intact
+    rule_results = vector_store.search(query="Merchant Gamma", knowledge_scope="GLOBAL")
+    assert len(rule_results) > 0
 
 
 # ===========================================================================
@@ -479,6 +504,8 @@ def test_document_builder_correction():
     doc = DocumentBuilder.build_correction_document(corr)
     assert doc.id == "correction:CORR-UNIT-01"
     assert doc.metadata["document_type"] == "CORRECTION"
+    assert doc.metadata["knowledge_scope"] == "RUN"
+    assert doc.metadata["run_id"] == "RUN-UNIT-01"
     assert doc.metadata["generated_rule_id"] == "RULE-FEE-WAIVE"
     assert "Fee waived by counterparty policy" in doc.text
 
@@ -494,6 +521,8 @@ def test_document_builder_audit():
     assert doc is not None
     assert doc.id == "audit:RUN-UNIT-01:42"
     assert doc.metadata["document_type"] == "AUDIT"
+    assert doc.metadata["knowledge_scope"] == "RUN"
+    assert doc.metadata["run_id"] == "RUN-UNIT-01"
     assert doc.metadata["event_type"] == "RULE_APPLICATION_COMPLETED"
     assert "match_count: 5" in doc.text
 
@@ -543,7 +572,7 @@ def test_auto_indexing_in_reconciliation_service(repo):
     assert service.vector_store.count() >= 2
     results = service.vector_store.search("AutoTest", run_id=run_id)
     assert len(results) > 0
-    assert any(r.metadata["run_id"] == run_id for r in results)
+    assert any(r.metadata.get("run_id") == run_id for r in results)
 
 
 def test_qa_frontend_assets_exposure():
@@ -667,6 +696,324 @@ def test_run_scoped_qa_isolation_against_cross_run_leakage(repo):
     resp_global = asyncio.run(agent.answer_question(req_global))
     assert resp_global.has_sufficient_evidence is True
     assert len(resp_global.sources) > 0
+
+
+# ===========================================================================
+# 5. Knowledge-Scope Semantics & Multi-Run Isolation Regression Tests
+# ===========================================================================
+
+def test_knowledge_scope_multirun_isolation_and_global_rule_access(repo):
+    """Test Scenario (Req 8):
+    Run A: Result A1, Correction A1, Relevant Global Rule R
+    Run B: Result B1, Correction B1
+
+    Verify:
+    1. Scoped Q&A for Run A retrieves A1, Correction A1, Rule R, and NEVER B1 or Correction B1.
+    2. Scoped Q&A for Run B retrieves B1, Correction B1, and NEVER A1 or Correction A1.
+    3. Global unscoped Q&A can access Rule R and records across runs.
+    """
+    import asyncio
+    import chromadb
+    from eagle.rag.vector_store import COLLECTION_NAME
+
+    run_a = "RUN-SCOPE-ALPHA"
+    run_b = "RUN-SCOPE-BETA"
+
+    # Setup Run A
+    repo.create_run(run_id=run_a, status="COMPLETED", source_count=1, target_count=2, total_records=3)
+    rec_a_s = CanonicalRecord(
+        record_id="SRC-APEX-01", transaction_id="TX-A1", source="GATEWAY", source_reference="REF-APEX-01",
+        amount=Decimal("12000.00"), currency="INR", transaction_date=date(2026, 9, 1), settlement_date=date(2026, 9, 1),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="PAYMENT"
+    )
+    rec_a_t1 = CanonicalRecord(
+        record_id="BNK-APEX-01", transaction_id="TX-A2", source="BANK", source_reference="REF-APEX-01",
+        amount=Decimal("6000.00"), currency="INR", transaction_date=date(2026, 9, 1), settlement_date=date(2026, 9, 1),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    rec_a_t2 = CanonicalRecord(
+        record_id="BNK-APEX-02", transaction_id="TX-A3", source="BANK", source_reference="REF-APEX-01",
+        amount=Decimal("6000.00"), currency="INR", transaction_date=date(2026, 9, 1), settlement_date=date(2026, 9, 1),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    repo.save_records(run_a, [rec_a_s, rec_a_t1, rec_a_t2])
+
+    res_a1 = ReconciliationResult(
+        relationship_id="REL-APEX-A1",
+        relationship_type=RelationshipType.ONE_TO_MANY,
+        source_record_ids=["SRC-APEX-01"],
+        target_record_ids=["BNK-APEX-01", "BNK-APEX-02"],
+        outcome=ReconciliationOutcome.MATCHED,
+        reconciled_amount=Decimal("12000.00"),
+    )
+    repo.save_results(run_a, [res_a1])
+
+    corr_a1 = OperatorCorrection(
+        correction_id="CORR-APEX-A1",
+        run_id=run_a,
+        relationship_id="REL-APEX-A1",
+        original_outcome="EXCEPTION",
+        original_exception_type="POSSIBLE_SPLIT",
+        original_source_ids=["SRC-APEX-01"],
+        original_target_ids=[],
+        corrected_outcome="MATCHED",
+        corrected_source_ids=["SRC-APEX-01"],
+        corrected_target_ids=["BNK-APEX-01", "BNK-APEX-02"],
+        operator_reason="Confirmed split settlement across two batch tranches for Merchant-Apex.",
+        created_at="2026-09-01T12:00:00Z",
+        generated_rule_id="RULE-APEX-SPLIT",
+    )
+    repo.save_correction(corr_a1)
+
+    rule_r = ReconciliationRule(
+        rule_id="RULE-APEX-SPLIT",
+        name="Merchant-Apex Split Settlement Rule",
+        description="Auto-match Merchant-Apex split settlements across multiple bank tranches.",
+        source_counterparty_pattern="Merchant-Apex",
+        reference_prefix="REF-APEX",
+        currency="INR",
+        max_amount_difference=Decimal("0.00"),
+        max_settlement_delay_days=1,
+        target_action="PREFER_CANDIDATE",
+        resulting_outcome="MATCHED",
+        confidence=1.0,
+        is_active=True,
+        created_at="2026-09-01T12:05:00Z",
+        source_correction_id="CORR-APEX-A1",
+    )
+    repo.save_rule(rule_r)
+
+    # Setup Run B (Completely distinct business entity)
+    repo.create_run(run_id=run_b, status="COMPLETED", source_count=1, target_count=1, total_records=2)
+    rec_b_s = CanonicalRecord(
+        record_id="SRC-ZETA-01", transaction_id="TX-B1", source="GATEWAY", source_reference="REF-ZETA-01",
+        amount=Decimal("8000.00"), currency="INR", transaction_date=date(2026, 9, 2), settlement_date=date(2026, 9, 2),
+        counterparty="Zeta Enterprises", status="COMPLETED", transaction_type="PAYMENT"
+    )
+    rec_b_t = CanonicalRecord(
+        record_id="BNK-ZETA-01", transaction_id="TX-B2", source="BANK", source_reference="REF-ZETA-01",
+        amount=Decimal("8000.00"), currency="INR", transaction_date=date(2026, 9, 2), settlement_date=date(2026, 9, 2),
+        counterparty="Zeta Enterprises", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    repo.save_records(run_b, [rec_b_s, rec_b_t])
+
+    res_b1 = ReconciliationResult(
+        relationship_id="REL-ZETA-B1",
+        relationship_type=RelationshipType.ONE_TO_ONE,
+        source_record_ids=["SRC-ZETA-01"],
+        target_record_ids=["BNK-ZETA-01"],
+        outcome=ReconciliationOutcome.MATCHED,
+        reconciled_amount=Decimal("8000.00"),
+    )
+    repo.save_results(run_b, [res_b1])
+
+    corr_b1 = OperatorCorrection(
+        correction_id="CORR-ZETA-B1",
+        run_id=run_b,
+        relationship_id="REL-ZETA-B1",
+        original_outcome="EXCEPTION",
+        original_exception_type="AMOUNT_MISMATCH",
+        original_source_ids=["SRC-ZETA-01"],
+        original_target_ids=["BNK-ZETA-01"],
+        corrected_outcome="MATCHED",
+        corrected_source_ids=["SRC-ZETA-01"],
+        corrected_target_ids=["BNK-ZETA-01"],
+        operator_reason="Verified Zeta Enterprises fee waiver correction.",
+        created_at="2026-09-02T14:00:00Z",
+    )
+    repo.save_correction(corr_b1)
+
+    # Index both runs into isolated vector store
+    client = chromadb.EphemeralClient()
+    try:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
+
+    vs = EagleVectorStore(chroma_path=":memory:", client=client)
+    vs.index_run(repo, run_a)
+    vs.index_run(repo, run_b)
+
+    agent = EagleQAAgent(vector_store=vs, qa_provider=MockQAProvider())
+
+    # 1. Scoped query for Run A asking about Merchant-Apex rule and correction
+    req_a = QARequest(
+        question="Why was the Merchant-Apex transaction resolved and what rule applies?",
+        run_id=run_a,
+        max_sources=10,
+    )
+    resp_a = asyncio.run(agent.answer_question(req_a))
+    assert resp_a.has_sufficient_evidence is True
+    assert len(resp_a.sources) > 0
+
+    doc_types_a = {s.document_type for s in resp_a.sources}
+    assert "RESULT" in doc_types_a or "CORRECTION" in doc_types_a
+    assert "RULE" in doc_types_a
+
+    # Verify Run A sources: MUST include A1 / CORR-A1 / RULE-APEX-SPLIT, and NEVER B1 / CORR-B1
+    for s in resp_a.sources:
+        if s.run_id:
+            assert s.run_id == run_a, f"Leakage: Source {s.identifier} has run_id={s.run_id}, expected {run_a}"
+            assert s.run_id != run_b
+        if s.document_type == "RULE":
+            assert s.rule_id == "RULE-APEX-SPLIT"
+            assert s.run_id is None  # Global rule has no fake run_id
+
+    source_ids_a = {s.identifier for s in resp_a.sources}
+    assert "REL-APEX-A1" in source_ids_a or "CORR-APEX-A1" in source_ids_a
+    assert "RULE-APEX-SPLIT" in source_ids_a
+    assert "REL-ZETA-B1" not in source_ids_a
+    assert "CORR-ZETA-B1" not in source_ids_a
+
+    # 2. Scoped query for Run B asking about Zeta Enterprises
+    req_b = QARequest(
+        question="What correction was applied for Zeta Enterprises?",
+        run_id=run_b,
+        max_sources=10,
+    )
+    resp_b = asyncio.run(agent.answer_question(req_b))
+    assert resp_b.has_sufficient_evidence is True
+    assert len(resp_b.sources) > 0
+
+    for s in resp_b.sources:
+        if s.run_id:
+            assert s.run_id == run_b, f"Leakage: Source {s.identifier} has run_id={s.run_id}, expected {run_b}"
+            assert s.run_id != run_a
+
+    source_ids_b = {s.identifier for s in resp_b.sources}
+    assert "CORR-ZETA-B1" in source_ids_b or "REL-ZETA-B1" in source_ids_b
+    assert "REL-APEX-A1" not in source_ids_b
+    assert "CORR-APEX-A1" not in source_ids_b
+
+    # 3. Global unscoped query (run_id=None)
+    req_global = QARequest(
+        question="What learned rules exist in Eagle?",
+        run_id=None,
+        max_sources=10,
+    )
+    resp_global = asyncio.run(agent.answer_question(req_global))
+    assert resp_global.has_sufficient_evidence is True
+    assert any(s.document_type == "RULE" and s.rule_id == "RULE-APEX-SPLIT" for s in resp_global.sources)
+
+
+def test_scoped_run_qa_retrieves_relevant_global_rule(repo):
+    """Test Original Bug (Req 10):
+    Create a global learned rule relevant to a Run A question.
+    Ensure that querying /runs/{run_a}/qa retrieves that global rule without dropping it.
+    """
+    import asyncio
+    import chromadb
+    from eagle.rag.vector_store import COLLECTION_NAME
+
+    run_id = "RUN-APEX-ORIG-01"
+    repo.create_run(run_id=run_id, status="COMPLETED", source_count=1, target_count=2, total_records=3)
+
+    rec_s = CanonicalRecord(
+        record_id="SRC-RULE-001", transaction_id="TX-1", source="GATEWAY", source_reference="TEST-RULE-001",
+        amount=Decimal("12000.00"), currency="INR", transaction_date=date(2026, 9, 3), settlement_date=date(2026, 9, 3),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="PAYMENT"
+    )
+    rec_t1 = CanonicalRecord(
+        record_id="BANK-APEX-01", transaction_id="TX-2", source="BANK", source_reference="TEST-RULE-001",
+        amount=Decimal("6000.00"), currency="INR", transaction_date=date(2026, 9, 3), settlement_date=date(2026, 9, 3),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    rec_t2 = CanonicalRecord(
+        record_id="BANK-APEX-02", transaction_id="TX-3", source="BANK", source_reference="TEST-RULE-001",
+        amount=Decimal("6000.00"), currency="INR", transaction_date=date(2026, 9, 3), settlement_date=date(2026, 9, 3),
+        counterparty="Merchant-Apex", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    repo.save_records(run_id, [rec_s, rec_t1, rec_t2])
+
+    res = ReconciliationResult(
+        relationship_id="REL-APEX-SPLIT-01",
+        relationship_type=RelationshipType.ONE_TO_MANY,
+        source_record_ids=["SRC-RULE-001"],
+        target_record_ids=["BANK-APEX-01", "BANK-APEX-02"],
+        outcome=ReconciliationOutcome.MATCHED,
+        reconciled_amount=Decimal("12000.00"),
+    )
+    repo.save_results(run_id, [res])
+
+    # Global learned rule
+    rule = ReconciliationRule(
+        rule_id="RULE-APEX-LEARNED-01",
+        name="Merchant-Apex Split Settlement Pattern",
+        description="Learned rule matching 1:N split settlements for Merchant-Apex in INR.",
+        source_counterparty_pattern="Merchant-Apex",
+        reference_prefix="TEST-RULE-",
+        currency="INR",
+        max_amount_difference=Decimal("0.00"),
+        max_settlement_delay_days=1,
+        target_action="PREFER_CANDIDATE",
+        resulting_outcome="MATCHED",
+        confidence=1.0,
+        is_active=True,
+        created_at="2026-09-03T16:00:00Z",
+    )
+    repo.save_rule(rule)
+
+    client = chromadb.EphemeralClient()
+    try:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
+
+    vs = EagleVectorStore(chroma_path=":memory:", client=client)
+    vs.index_run(repo, run_id)
+
+    # Verify lower-level vector search includes the global rule
+    results = vs.search(
+        query="Why was Merchant-Apex transaction resolved by the learned rule?",
+        run_id=run_id,
+        limit=5,
+    )
+    assert any(r.metadata.get("document_type") == "RULE" and r.metadata.get("rule_id") == "RULE-APEX-LEARNED-01" for r in results)
+
+    # Verify high-level QA Agent retrieval includes rule attribution
+    agent = EagleQAAgent(vector_store=vs, qa_provider=MockQAProvider())
+    req = QARequest(
+        question="Why was Merchant-Apex transaction resolved by the learned rule?",
+        run_id=run_id,
+    )
+    resp = asyncio.run(agent.answer_question(req))
+    assert resp.has_sufficient_evidence is True
+    rule_source = next((s for s in resp.sources if s.document_type == "RULE"), None)
+    assert rule_source is not None
+    assert rule_source.rule_id == "RULE-APEX-LEARNED-01"
+    assert rule_source.run_id is None  # Pure global scope
+
+
+def test_vector_store_knowledge_scope_semantics(repo, sample_data):
+    """Test Low-Level Vector Store Scope Semantics (Req 9):
+    Verify metadata tagging and filtering independently of the LLM.
+    """
+    run_id = sample_data["run_id"]
+    vs = EagleVectorStore(chroma_path=":memory:")
+    vs.index_run(repo, run_id)
+
+    # 1. Global Scope Search
+    global_docs = vs.search(query="Merchant Gamma rule", knowledge_scope="GLOBAL")
+    assert len(global_docs) > 0
+    for doc in global_docs:
+        assert doc.metadata["knowledge_scope"] == "GLOBAL"
+        assert doc.metadata["document_type"] == "RULE"
+        assert "run_id" not in doc.metadata
+
+    # 2. Run Scope Search (Explicit knowledge_scope='RUN')
+    run_docs = vs.search(query="Merchant Gamma", run_id=run_id, knowledge_scope="RUN")
+    assert len(run_docs) > 0
+    for doc in run_docs:
+        assert doc.metadata["knowledge_scope"] == "RUN"
+        assert doc.metadata["run_id"] == run_id
+        assert doc.metadata["document_type"] in {"RUN", "RESULT", "CORRECTION", "AUDIT"}
+
+    # 3. Hybrid Run-Scoped Search (run_id provided, knowledge_scope=None)
+    hybrid_docs = vs.search(query="Merchant Gamma", run_id=run_id)
+    assert len(hybrid_docs) > 0
+    scopes = {d.metadata["knowledge_scope"] for d in hybrid_docs}
+    assert "RUN" in scopes
+    assert "GLOBAL" in scopes
 
 
 

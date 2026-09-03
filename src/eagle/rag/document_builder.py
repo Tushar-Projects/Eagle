@@ -80,6 +80,7 @@ class DocumentBuilder:
             text="\n".join(text_lines),
             metadata={
                 "document_type": "RUN",
+                "knowledge_scope": "RUN",
                 "run_id": run_id,
                 "created_at": created_at,
                 "status": status,
@@ -163,6 +164,7 @@ class DocumentBuilder:
             text="\n".join(text_lines),
             metadata={
                 "document_type": "RESULT",
+                "knowledge_scope": "RUN",
                 "run_id": run_id,
                 "relationship_id": rel_id,
                 "outcome": outcome_str,
@@ -202,6 +204,7 @@ class DocumentBuilder:
             text="\n".join(text_lines),
             metadata={
                 "document_type": "CORRECTION",
+                "knowledge_scope": "RUN",
                 "run_id": correction.run_id,
                 "correction_id": correction.correction_id,
                 "relationship_id": correction.relationship_id,
@@ -244,6 +247,7 @@ class DocumentBuilder:
             text="\n".join(text_lines),
             metadata={
                 "document_type": "RULE",
+                "knowledge_scope": "GLOBAL",
                 "rule_id": rule.rule_id,
                 "name": rule.name,
                 "is_active": rule.is_active,
@@ -285,6 +289,7 @@ class DocumentBuilder:
             text="\n".join(text_lines),
             metadata={
                 "document_type": "AUDIT",
+                "knowledge_scope": "RUN",
                 "run_id": run_id,
                 "audit_id": str(audit_id),
                 "event_type": event_type,
