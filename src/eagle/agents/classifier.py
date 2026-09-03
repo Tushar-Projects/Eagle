@@ -532,19 +532,23 @@ class AIExceptionClassifier:
                 f"Invalid reconciled_amount: {decision.reconciled_amount}"
             )
 
-        # 4. Validate amount (if MATCHED)
+        # 4. Validate amount (if MATCHED or EXCEPTION)
+        selected_source_amounts = []
+        for sid in source_ids:
+            if sid in case.source_record_ids:
+                sidx = case.source_record_ids.index(sid)
+                selected_source_amounts.append(case.source_amounts[sidx])
+        total_source_amount = sum(Decimal(str(amt)) for amt in selected_source_amounts)
+
         if decision.outcome == "MATCHED":
-            selected_source_amounts = []
-            for sid in source_ids:
-                if sid in case.source_record_ids:
-                    sidx = case.source_record_ids.index(sid)
-                    selected_source_amounts.append(case.source_amounts[sidx])
-            total_source_amount = sum(Decimal(str(amt)) for amt in selected_source_amounts)
             if reconciled_amount != total_source_amount:
                 raise _SafetyViolation(
                     f"Reconciled amount {reconciled_amount} does not match "
                     f"source amount {total_source_amount}"
                 )
+        else:
+            # For candidate abstention/exception, reconciled amount must be anchored to the source amount
+            reconciled_amount = total_source_amount
 
         # 5. Validate topology consistency
         if len(target_ids) == 0:

@@ -49,33 +49,37 @@ def is_stage2_normalized_match(source: CanonicalRecord, target: CanonicalRecord)
     return bool(s_refs.intersection(t_refs))
 
 
-def is_stage3_financial_match(source: CanonicalRecord, target: CanonicalRecord) -> bool:
+def is_stage3_financial_match(source: CanonicalRecord, target: CanonicalRecord) -> Tuple[bool, bool]:
     """Determine if records match based on amount, currency, date, and counterparty.
 
     Counterparty is used as a disambiguation signal if both records provide it.
-    If they both provide it and it conflicts, they do not match.
+    If they both provide it and it conflicts, has_conflict is True so it is treated
+    as an ambiguous candidate rather than an immediate deterministic match.
+
+    Returns:
+        (is_financial_candidate, has_counterparty_conflict)
     """
     if source.amount != target.amount:
-        return False
+        return False, False
     if source.currency != target.currency:
-        return False
+        return False, False
 
     # Check date window (allowing up to 10 days for normal matching to catch delayed settlements)
     # The actual settlement classification happens post-match.
     delay_days = (target.settlement_date - source.transaction_date).days
-    if delay_days < 0 or delay_days > 15: # Arbitrary upper bound for financial matching
-        return False
+    if delay_days < 0 or delay_days > 15:  # Upper bound for financial matching
+        return False, False
 
     # Counterparty evidence
+    has_conflict = False
     if source.counterparty and target.counterparty:
-        # If both are present, they must not conflict materially.
-        # We'll use a simple normalized check.
+        # If both are present, check if they conflict materially.
         s_cp = normalize_reference(source.counterparty)
         t_cp = normalize_reference(target.counterparty)
         if s_cp and t_cp and s_cp != t_cp:
-            return False
+            has_conflict = True
 
-    return True
+    return True, has_conflict
 
 
 def is_stage4_fee_match(source: CanonicalRecord, target: CanonicalRecord) -> Tuple[bool, bool, bool]:

@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import io
 import uuid
 
 import pytest
@@ -1242,6 +1243,429 @@ def test_active_rule_does_not_match_unrelated_candidate(client_with_service, iso
     rule_events = [l for l in audit_logs if l["event_type"] == "RULE_APPLICATION_COMPLETED"]
     # The Zeta rule must NOT match Delta candidate options
     assert len(rule_events) == 0
+
+
+def test_cross_cardinality_1n_split_and_1to1_decoy_rule_learning_and_rerun(client_with_service, isolated_service):
+    """Test 31: Cross-cardinality candidate pool (1:1 Decoy vs 1:N Split) remains unresolved in baseline,
+
+    persists operator correction, synthesizes active generalized rule for counterparty,
+    and rerun uniquely resolves the 1:N match while keeping the 1:1 decoy unmatched.
+    """
+    sources = [
+        CanonicalRecord(
+            record_id="SRC-GAMMA",
+            transaction_id="TX-GAMMA",
+            source="GATEWAY",
+            source_reference="REF-GAMMA",
+            amount=Decimal("10000.00"),
+            currency="INR",
+            transaction_date=date(2026, 8, 31),
+            settlement_date=date(2026, 8, 31),
+            counterparty="Merchant-Gamma",
+            status="COMPLETED",
+            transaction_type="CREDIT",
+        )
+    ]
+    targets = [
+        CanonicalRecord(
+            record_id="BANK-GAMMA-01",
+            transaction_id="BNK-G01",
+            source="BANK",
+            source_reference="REF-G01",
+            amount=Decimal("6000.00"),
+            currency="INR",
+            transaction_date=date(2026, 8, 31),
+            settlement_date=date(2026, 8, 31),
+            counterparty="Merchant-Gamma",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="BANK-GAMMA-02",
+            transaction_id="BNK-G02",
+            source="BANK",
+            source_reference="REF-G02",
+            amount=Decimal("4000.00"),
+            currency="INR",
+            transaction_date=date(2026, 8, 31),
+            settlement_date=date(2026, 8, 31),
+            counterparty="Merchant-Gamma",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="BANK-DECOY",
+            transaction_id="BNK-DEC",
+            source="BANK",
+            source_reference="REF-DEC",
+            amount=Decimal("10000.00"),
+            currency="INR",
+            transaction_date=date(2026, 8, 31),
+            settlement_date=date(2026, 8, 31),
+            counterparty="Decoy-Merchant",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+    ]
+
+    # 1. Baseline reconciliation: must remain unresolved due to competing 1:1 and 1:N options
+    baseline_res = isolated_service.reconcile_records(sources, targets, apply_rules=False)
+    run_id = baseline_res["run_id"]
+    baseline_metrics = isolated_service.calculate_metrics(run_id)
+
+    assert baseline_metrics["matched_count"] == 0
+    assert baseline_metrics["match_rate"] == 0.0
+    assert baseline_metrics["value_weighted_match_rate"] == 0.0
+
+    # Verify candidate pool was formed with both 1:1 decoy and 1:N split
+    candidate_decisions = isolated_service.repository.get_candidates(run_id)
+    assert len(candidate_decisions) >= 1
+    cd = candidate_decisions[0]
+    assert cd["anchor_record_id"] == "SRC-GAMMA"
+    
+    # 2. Find the unresolved relationship for SRC-GAMMA
+    init_results = isolated_service.repository.get_results(run_id)
+    target_rel = next(r for r in init_results if "SRC-GAMMA" in r.source_record_ids)
+    assert target_rel.outcome == ReconciliationOutcome.EXCEPTION
+
+    # 3. Submit operator correction selecting the 1:N split
+    corr_payload = {
+        "corrected_outcome": "MATCHED",
+        "corrected_source_ids": ["SRC-GAMMA"],
+        "corrected_target_ids": ["BANK-GAMMA-01", "BANK-GAMMA-02"],
+        "operator_reason": "Settlement split confirmed with Merchant-Gamma",
+        "generate_rule": True,
+    }
+    corr_resp = client_with_service.post(
+        f"/runs/{run_id}/results/{target_rel.relationship_id}/correct",
+        json=corr_payload,
+    )
+    assert corr_resp.status_code in {200, 201}
+    corr_data = corr_resp.json()
+    rule_id = corr_data["generated_rule_id"]
+    assert rule_id is not None
+
+    # Verify rule was synthesized and is active
+    rule = isolated_service.repository.get_rule(rule_id)
+    assert rule is not None
+    assert rule.is_active is True
+    assert rule.source_counterparty_pattern == "Merchant-Gamma"
+    assert rule.currency == "INR"
+
+    # 4. Trigger rerun with active rules
+    rerun_resp = client_with_service.post(
+        f"/runs/{run_id}/rerun",
+        json={"apply_rules": True},
+    )
+    assert rerun_resp.status_code in {200, 201}
+    rerun_data = rerun_resp.json()
+    rerun_id = rerun_data["rerun_id"]
+
+    # 5. Verify Rerun results: 1:N committed, 1:1 decoy remains unmatched
+    rerun_results = isolated_service.repository.get_results(rerun_id)
+    matched_results = [r for r in rerun_results if r.outcome == ReconciliationOutcome.MATCHED]
+    assert len(matched_results) == 1
+    m = matched_results[0]
+    assert set(m.source_record_ids) == {"SRC-GAMMA"}
+    assert set(m.target_record_ids) == {"BANK-GAMMA-01", "BANK-GAMMA-02"}
+    assert m.relationship_type == RelationshipType.ONE_TO_MANY
+    assert m.reconciled_amount == Decimal("10000.00")
+
+    # BANK-DECOY must remain unmatched
+    matched_target_ids = {tid for r in matched_results for tid in r.target_record_ids}
+    assert "BANK-DECOY" not in matched_target_ids
+    assert "BANK-GAMMA-01" in matched_target_ids
+    assert "BANK-GAMMA-02" in matched_target_ids
+
+    # 6. Verify before/after metrics reflect genuine improvement
+    rerun_metrics = isolated_service.calculate_metrics(rerun_id)
+    assert rerun_metrics["matched_count"] == 1
+    assert rerun_metrics["match_rate"] == 100.0
+    assert rerun_metrics["value_weighted_match_rate"] == 100.0
+    assert Decimal(rerun_metrics["total_reconciled_amount"]) == Decimal("10000.00")
+
+    impact_resp = client_with_service.get(f"/runs/{run_id}/rule-impact")
+    assert impact_resp.status_code == 200
+    impact = impact_resp.json()
+    assert impact["has_rerun"] is True
+    assert impact["delta"]["match_rate_improvement"] == 100.0
+    assert impact["delta"]["value_weighted_improvement"] == 100.0
+
+
+def test_baseline_ambiguous_candidate_unresolved_and_rule_rerun(client_with_service, isolated_service):
+    """Test 32: Baseline ambiguous candidate pool (1:N split vs 1:1 decoy) remains unresolved,
+
+    without auto-committing Option 0, leaving BANK-DECOY uncommitted, and operator correction
+    synthesizes an active rule that accurately resolves the rerun.
+    """
+    sources = [
+        CanonicalRecord(
+            record_id="SRC-RULE-001",
+            transaction_id="TX-001",
+            source="GATEWAY",
+            source_reference="TEST-RULE-001",
+            amount=Decimal("12000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Merchant-Apex",
+            status="COMPLETED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="SRC-RULE-002",
+            transaction_id="TX-002",
+            source="GATEWAY",
+            source_reference="TEST-RULE-002",
+            amount=Decimal("5000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Merchant-Beta",
+            status="COMPLETED",
+            transaction_type="CREDIT",
+        ),
+    ]
+
+    targets = [
+        CanonicalRecord(
+            record_id="BANK-APEX-01",
+            transaction_id="TX-A01",
+            source="BANK",
+            source_reference="TEST-RULE-001",
+            amount=Decimal("6000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Merchant-Apex",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="BANK-APEX-02",
+            transaction_id="TX-A02",
+            source="BANK",
+            source_reference="TEST-RULE-001",
+            amount=Decimal("6000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Merchant-Apex",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="BANK-DECOY",
+            transaction_id="TX-DEC",
+            source="BANK",
+            source_reference="TEST-RULE-001",
+            amount=Decimal("12000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Decoy-Merchant",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+        CanonicalRecord(
+            record_id="BANK-BETA",
+            transaction_id="TX-B01",
+            source="BANK",
+            source_reference="TEST-RULE-002",
+            amount=Decimal("5000.00"),
+            currency="INR",
+            transaction_date=date(2026, 9, 3),
+            settlement_date=date(2026, 9, 3),
+            counterparty="Merchant-Beta",
+            status="POSTED",
+            transaction_type="CREDIT",
+        ),
+    ]
+
+    # 1. Baseline reconciliation (ZERO active rules)
+    baseline_res = isolated_service.reconcile_records(sources, targets, apply_rules=False)
+    run_id = baseline_res["run_id"]
+
+    # 2. Assert candidate pool contains both 1:N and 1:1 decoy
+    candidates = isolated_service.repository.get_candidates(run_id)
+    apex_cand = next(c for c in candidates if c["anchor_record_id"] == "SRC-RULE-001")
+    assert len(apex_cand["candidate_options"]) == 2
+    opts = apex_cand["candidate_options"]
+    assert any(set(o["target_record_ids"]) == {"BANK-APEX-01", "BANK-APEX-02"} for o in opts)
+    assert any(set(o["target_record_ids"]) == {"BANK-DECOY"} for o in opts)
+
+    # 3. Assert deterministic engine did NOT commit either candidate
+    assert apex_cand["selected_candidate_index"] is None
+    assert apex_cand["validation_status"] == "ABSTAINED"
+
+    # 4. Assert baseline result is unresolved/EXCEPTION for SRC-RULE-001
+    results = isolated_service.repository.get_results(run_id)
+    apex_result = next(r for r in results if "SRC-RULE-001" in r.source_record_ids)
+    assert apex_result.outcome == ReconciliationOutcome.EXCEPTION
+    assert apex_result.target_record_ids == []
+    assert apex_result.reconciled_amount == Decimal("12000.00")
+
+    # Unrelated exact match is cleanly committed
+    beta_result = next(r for r in results if "SRC-RULE-002" in r.source_record_ids)
+    assert beta_result.outcome == ReconciliationOutcome.MATCHED
+    assert beta_result.target_record_ids == ["BANK-BETA"]
+
+    # 5. Assert baseline metrics reflect that SRC-RULE-001 was NOT matched
+    baseline_metrics = isolated_service.calculate_metrics(run_id)
+    assert baseline_metrics["matched_count"] == 1
+    assert baseline_metrics["match_rate"] == 50.0
+    # 5,000 / 17,000 = 29.41%
+    assert baseline_metrics["value_weighted_match_rate"] == 29.41
+
+    # BANK-DECOY must not be committed
+    all_committed_targets = {tid for r in results for tid in r.target_record_ids}
+    assert "BANK-DECOY" not in all_committed_targets
+
+    # 6. Operator correction selects 1:N split
+    corr_payload = {
+        "corrected_outcome": "MATCHED",
+        "corrected_source_ids": ["SRC-RULE-001"],
+        "corrected_target_ids": ["BANK-APEX-01", "BANK-APEX-02"],
+        "operator_reason": "Merchant-Apex verified split settlement",
+        "generate_rule": True,
+    }
+    corr_resp = client_with_service.post(
+        f"/runs/{run_id}/results/{apex_result.relationship_id}/correct",
+        json=corr_payload,
+    )
+    assert corr_resp.status_code in {200, 201}
+    rule_id = corr_resp.json()["generated_rule_id"]
+    assert rule_id is not None
+
+    rule = isolated_service.repository.get_rule(rule_id)
+    assert rule.is_active is True
+    assert rule.source_counterparty_pattern == "Merchant-Apex"
+
+    # 7. Trigger rerun using active rules
+    rerun_resp = client_with_service.post(
+        f"/runs/{run_id}/rerun",
+        json={"apply_rules": True},
+    )
+    assert rerun_resp.status_code in {200, 201}
+    rerun_id = rerun_resp.json()["rerun_id"]
+
+    # 8. Verify rerun: RuleEngine resolves 1:N match, BANK-DECOY remains unmatched
+    rerun_results = isolated_service.repository.get_results(rerun_id)
+    rerun_matched = [r for r in rerun_results if r.outcome == ReconciliationOutcome.MATCHED]
+    assert len(rerun_matched) == 2
+
+    apex_rerun = next(r for r in rerun_matched if "SRC-RULE-001" in r.source_record_ids)
+    assert set(apex_rerun.target_record_ids) == {"BANK-APEX-01", "BANK-APEX-02"}
+    assert apex_rerun.relationship_type == RelationshipType.ONE_TO_MANY
+    assert apex_rerun.reconciled_amount == Decimal("12000.00")
+
+    rerun_target_ids = {tid for r in rerun_results for tid in r.target_record_ids}
+    assert "BANK-DECOY" not in rerun_target_ids
+
+    # 9. Verify metrics improvement
+    rerun_metrics = isolated_service.calculate_metrics(rerun_id)
+    assert rerun_metrics["matched_count"] == 2
+    assert rerun_metrics["match_rate"] == 100.0
+    assert rerun_metrics["value_weighted_match_rate"] == 100.0
+
+    impact_resp = client_with_service.get(f"/runs/{run_id}/rule-impact")
+    assert impact_resp.status_code == 200
+    impact = impact_resp.json()
+    assert impact["has_rerun"] is True
+    assert impact["delta"]["match_rate_improvement"] == 50.0
+    assert impact["delta"]["value_weighted_improvement"] == 70.59
+
+
+def test_live_csv_file_upload_correction_and_rerun_pipeline(client_with_service, isolated_service):
+    """Test 36: Full live API workflow: CSV file upload -> baseline ambiguity -> operator correction -> rule synthesis -> rerun 100% metrics.
+    
+    Validates that CSV columns 'reference' are extracted into 'source_reference' on Gateway/Bank,
+    preserved in DB storage, utilized by RuleSynthesizer to infer reference_prefix, and correctly
+    evaluated by RuleEngine during rerun.
+    """
+    gateway_csv = (
+        "record_id,amount,currency,date,reference,counterparty\n"
+        "SRC-RULE-001,12000.00,INR,2026-09-03,TEST-RULE-001,Merchant-Apex\n"
+        "SRC-RULE-002,5000.00,INR,2026-09-03,TEST-RULE-002,Merchant-Beta\n"
+    )
+    bank_csv = (
+        "record_id,amount,currency,date,reference,counterparty\n"
+        "BANK-APEX-01,6000.00,INR,2026-09-03,TEST-RULE-001,Merchant-Apex\n"
+        "BANK-APEX-02,6000.00,INR,2026-09-03,TEST-RULE-001,Merchant-Apex\n"
+        "BANK-DECOY,12000.00,INR,2026-09-03,TEST-RULE-001,Decoy-Merchant\n"
+        "BANK-BETA,5000.00,INR,2026-09-03,TEST-RULE-002,Merchant-Beta\n"
+    )
+
+    # 1. Upload CSV files to /runs
+    files = {
+        "gateway_file": ("gateway.csv", io.BytesIO(gateway_csv.encode("utf-8")), "text/csv"),
+        "bank_file": ("bank.csv", io.BytesIO(bank_csv.encode("utf-8")), "text/csv"),
+    }
+    upload_resp = client_with_service.post("/runs", files=files)
+    assert upload_resp.status_code == 201
+    run_id = upload_resp.json()["run_id"]
+
+    # 2. Verify stored records have source_reference extracted
+    records = isolated_service.repository.get_records(run_id)
+    apex_src = next(r for r in records if r.record_id == "SRC-RULE-001")
+    assert apex_src.source_reference == "TEST-RULE-001"
+    apex_tgt1 = next(r for r in records if r.record_id == "BANK-APEX-01")
+    assert apex_tgt1.source_reference == "TEST-RULE-001"
+
+    # 3. Verify baseline results: SRC-RULE-001 is EXCEPTION, 50% match rate
+    baseline_results = isolated_service.repository.get_results(run_id)
+    apex_res = next(r for r in baseline_results if "SRC-RULE-001" in r.source_record_ids)
+    assert apex_res.outcome == ReconciliationOutcome.EXCEPTION
+    assert apex_res.target_record_ids == []
+
+    baseline_metrics = isolated_service.calculate_metrics(run_id)
+    assert baseline_metrics["matched_count"] == 1
+    assert baseline_metrics["match_rate"] == 50.0
+
+    # 4. Operator submits correction for Option 0 with generate_rule=True
+    corr_payload = {
+        "corrected_outcome": "MATCHED",
+        "corrected_source_ids": ["SRC-RULE-001"],
+        "corrected_target_ids": ["BANK-APEX-01", "BANK-APEX-02"],
+        "operator_reason": "Merchant-Apex split settlement",
+        "generate_rule": True,
+    }
+    corr_resp = client_with_service.post(
+        f"/runs/{run_id}/results/{apex_res.relationship_id}/correct",
+        json=corr_payload,
+    )
+    assert corr_resp.status_code in {200, 201}
+    rule_id = corr_resp.json()["generated_rule_id"]
+    assert rule_id is not None
+
+    rule = isolated_service.repository.get_rule(rule_id)
+    assert rule.is_active is True
+    assert rule.source_counterparty_pattern == "Merchant-Apex"
+    assert rule.reference_prefix == "TEST-RULE-"
+
+    # 5. Trigger rerun with rules
+    rerun_resp = client_with_service.post(
+        f"/runs/{run_id}/rerun",
+        json={"apply_rules": True},
+    )
+    assert rerun_resp.status_code in {200, 201}
+    rerun_id = rerun_resp.json()["rerun_id"]
+
+    # 6. Verify rerun resolves SRC-RULE-001 -> BANK-APEX-01 + BANK-APEX-02 with 100% metrics
+    rerun_results = isolated_service.repository.get_results(rerun_id)
+    apex_rerun = next(r for r in rerun_results if "SRC-RULE-001" in r.source_record_ids)
+    assert apex_rerun.outcome == ReconciliationOutcome.MATCHED
+    assert set(apex_rerun.target_record_ids) == {"BANK-APEX-01", "BANK-APEX-02"}
+    assert apex_rerun.relationship_type == RelationshipType.ONE_TO_MANY
+    assert apex_rerun.reconciled_amount == Decimal("12000.00")
+
+    rerun_metrics = isolated_service.calculate_metrics(rerun_id)
+    assert rerun_metrics["matched_count"] == 2
+    assert rerun_metrics["match_rate"] == 100.0
+    assert rerun_metrics["value_weighted_match_rate"] == 100.0
+
+
+
 
 
 

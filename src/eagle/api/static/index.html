@@ -7,7 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=20260901">
+  <link rel="stylesheet" href="/static/styles.css?v=20260903-r1">
+
+
 </head>
 <body>
   <div id="app" class="app-layout">
@@ -61,6 +63,14 @@
           <span class="run-timestamp" id="displayRunTimestamp">--</span>
         </div>
         <div class="run-meta-right">
+          <button id="btnRerunWithRules" class="btn btn-primary hidden" title="Rerun reconciliation applying active learned rules">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Rerun with Rules (<span id="activeRulesBadge">0</span>)
+          </button>
           <button id="btnQuickAskEagle" class="btn btn-secondary" title="Ask grounded operational questions">
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -68,6 +78,7 @@
             Ask Eagle
           </button>
           <button id="btnExportCsv" class="btn btn-outline" disabled>
+
 
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -164,6 +175,13 @@
           </svg>
           Audit Trail (<span id="countAuditLogs">0</span>)
         </button>
+        <button class="tab-btn" data-tab="tab-corrections">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+          </svg>
+          Corrections &amp; Rules (<span id="countCorrections">0</span>)
+        </button>
         <button class="tab-btn" data-tab="tab-qa">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
@@ -217,11 +235,12 @@
                 <th>Classification</th>
                 <th>Amount</th>
                 <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody id="resultsTableBody">
               <tr>
-                <td colspan="8" class="table-empty">No reconciliation data loaded. Select or trigger a run.</td>
+                <td colspan="9" class="table-empty">No reconciliation data loaded. Select or trigger a run.</td>
               </tr>
             </tbody>
           </table>
@@ -263,16 +282,18 @@
                 <th>Severity</th>
                 <th>Reconciled Amount</th>
                 <th>Action Required</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody id="exceptionsTableBody">
               <tr>
-                <td colspan="7" class="table-empty">No exceptions in this run.</td>
+                <td colspan="8" class="table-empty">No exceptions in this run.</td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
+
 
       <!-- Tab 3: Candidate Inspector View -->
       <section class="tab-pane" id="tab-candidates">
@@ -352,6 +373,128 @@
           </div>
         </div>
       </section>
+
+      <!-- Tab 6: Corrections & Rules View -->
+      <section class="tab-pane" id="tab-corrections">
+        <!-- Top Run-Level Rule Management Banner -->
+        <div class="panel-header-banner">
+          <div class="panel-header-info">
+            <h2>Rules &amp; Corrections</h2>
+            <div class="panel-stats-row">
+              <span class="stat-item">Active Learned Rules: <strong id="statActiveRules">0</strong></span>
+              <span class="stat-separator">•</span>
+              <span class="stat-item">Operator Corrections: <strong id="statCorrections">0</strong></span>
+              <span class="stat-separator">•</span>
+              <span class="scope-pill-badge" id="ruleScopeIndicator">GLOBAL RULES (Applied to current run)</span>
+            </div>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" class="btn btn-primary" id="btnOpenAddRuleModal">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              + Add Reconciliation Rule
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnTabRerunWithRules">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Rerun with Active Rules
+            </button>
+          </div>
+        </div>
+
+        <!-- Learned Rule Impact Card (Visible when run has rerun or is rerun) -->
+        <div id="ruleImpactContainer" class="rule-impact-container hidden">
+          <div class="impact-card">
+            <div class="impact-header">
+              <div class="impact-title-group">
+                <h4>
+                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                  </svg>
+                  LEARNED RULE IMPACT
+                </h4>
+                <span class="impact-subtitle" id="impactSubtitle">Reconciliation improvement after applying generalized operator rules</span>
+              </div>
+            </div>
+            <div id="impactGridContainer">
+              <!-- Impact comparison table populated dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Synthesized / Learned Reconciliation Rules -->
+        <div class="panel-section">
+          <div class="section-header-row">
+            <div>
+              <h3>LEARNED RECONCILIATION RULES (<span id="countRulesSection">0</span>)</h3>
+              <p class="text-secondary">Generalized rules applied between deterministic matching and AI candidate classification.</p>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="rulesTable">
+              <thead>
+                <tr>
+                  <th>Rule ID</th>
+                  <th>Rule Name</th>
+                  <th>Status</th>
+                  <th>Scope</th>
+                  <th>Generalized Predicates</th>
+                  <th>Resulting Action</th>
+                  <th>Confidence</th>
+                  <th>Created From</th>
+                  <th>Created At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rulesTableBody">
+                <tr>
+                  <td colspan="10" class="table-empty">No learned rules available. Click "+ Add Reconciliation Rule" or submit an exception correction.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section: Operator Corrections History -->
+        <div class="panel-section" style="margin-top: 2.5rem;">
+          <div class="section-header-row">
+            <div>
+              <h3>OPERATOR CORRECTIONS HISTORY (<span id="countCorrectionsSection">0</span>)</h3>
+              <p class="text-secondary">Immutable, append-only log of human overrides submitted for this run.</p>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="correctionsTable">
+              <thead>
+                <tr>
+                  <th>Correction ID</th>
+                  <th>Relationship ID</th>
+                  <th>Original &rarr; Corrected</th>
+                  <th>Operator Reason</th>
+                  <th>Learned Rule</th>
+                  <th>Created At</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="correctionsTableBody">
+                <tr>
+                  <td colspan="7" class="table-empty">No operator corrections recorded for this run.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <!-- Upload Modal -->
@@ -427,11 +570,302 @@
       </div>
     </div>
 
+    <!-- Operator Correction Modal -->
+    <div class="modal-overlay hidden" id="correctionModal">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <div>
+            <h3 class="modal-title">Operator Correction &amp; Rule Synthesis</h3>
+            <p class="modal-subtitle">Submit manual override for an exception relationship and optionally learn a reusable rule.</p>
+          </div>
+          <button type="button" class="btn-modal-close" id="btnCloseCorrectionModal">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- Read-Only Original Result Box -->
+          <div class="original-result-box">
+            <div class="orig-box-header">Original Reconciliation Result (Immutable)</div>
+            <div class="orig-box-grid">
+              <div><span class="text-muted">Relationship ID:</span> <code id="origRelId">--</code></div>
+              <div><span class="text-muted">Topology:</span> <strong id="origTopology">--</strong></div>
+              <div><span class="text-muted">Amount:</span> <strong id="origAmount">--</strong></div>
+              <div><span class="text-muted">Original Outcome:</span> <span id="origOutcomeBadge" class="badge-pill">--</span></div>
+              <div><span class="text-muted">Exception Type:</span> <span id="origExceptionBadge" class="badge-pill">--</span></div>
+              <div><span class="text-muted">Review Flag:</span> <span id="origReviewFlag" class="badge-pill">--</span></div>
+            </div>
+            <div class="orig-participants-row">
+              <div>
+                <span class="text-muted">Gateway Participants:</span>
+                <div id="origSourceChips" class="participant-chips"></div>
+              </div>
+              <div>
+                <span class="text-muted">Bank Participants:</span>
+                <div id="origTargetChips" class="participant-chips"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Editable Correction Form -->
+          <form id="correctionForm" class="correction-form">
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="corrOutcome">Corrected Outcome <span class="required">*</span></label>
+                <select id="corrOutcome" class="select-filter" required>
+                  <option value="MATCHED">MATCHED</option>
+                  <option value="EXCEPTION">EXCEPTION</option>
+                </select>
+              </div>
+
+              <div class="form-group" id="corrExceptionGroup" style="display: none;">
+                <label for="corrExceptionType">Corrected Exception Type</label>
+                <select id="corrExceptionType" class="select-filter">
+                  <option value="">None / Resolved</option>
+                  <option value="ROUNDING_DIFFERENCE">Rounding Difference</option>
+                  <option value="FEE_DEDUCTION">Fee Deduction</option>
+                  <option value="SETTLEMENT_DELAY">Settlement Delay</option>
+                  <option value="DUPLICATE">Duplicate</option>
+                  <option value="POSSIBLE_DUPLICATE">Possible Duplicate</option>
+                  <option value="CURRENCY_MISMATCH">Currency Mismatch</option>
+                  <option value="MISSING_RECORD">Missing Record (Orphan)</option>
+                  <option value="UNKNOWN">Unknown</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Participant Selection Lists (from active run records) -->
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label>Participating Gateway (Source) Records</label>
+                <div class="record-picker-container" id="corrSourcePicker">
+                  <!-- Populated dynamically -->
+                </div>
+                <small class="text-muted">Select Gateway records involved in corrected relationship</small>
+              </div>
+
+              <div class="form-group">
+                <label>Participating Bank (Target) Records</label>
+                <div class="record-picker-container" id="corrTargetPicker">
+                  <!-- Populated dynamically -->
+                </div>
+                <small class="text-muted">Select Bank records involved in corrected relationship</small>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="corrReason">Operator Reason / Justification <span class="required">*</span></label>
+              <textarea id="corrReason" rows="3" class="input-text" placeholder="Provide mandatory operational justification for this correction..." required minlength="3"></textarea>
+            </div>
+
+            <div class="form-checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="corrGenerateRule" checked>
+                <span><strong>Generate reusable rule from this correction</strong> (extracts generalized counterparties, tolerances, and settlement delay predicates)</span>
+              </label>
+            </div>
+
+            <div id="corrValidationAlert" class="alert-box alert-danger hidden"></div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" id="btnCancelCorrection">Cancel</button>
+              <button type="submit" class="btn btn-primary" id="btnSubmitCorrection">Submit Correction</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Correction Detail Inspection Modal -->
+    <div class="modal-overlay hidden" id="correctionDetailModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 class="modal-title">Correction Details</h3>
+          <button class="btn-modal-close" id="btnCloseCorrectionDetailModal">&times;</button>
+        </div>
+        <div class="modal-body" id="correctionDetailBody">
+          <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btnCloseDetailModalBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rerun Confirmation Modal -->
+    <div class="modal-overlay hidden" id="rerunConfirmModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 class="modal-title">Rerun Reconciliation with Learned Rules</h3>
+          <button class="btn-modal-close" id="btnCloseRerunModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Create a new reconciliation run applying active learned rules across all ingested records from run <strong id="rerunParentId">--</strong>?</p>
+          <div class="info-banner" style="margin-top: 1rem;">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            <div>
+              <strong>Safety Guarantee:</strong> The original run remains completely immutable. A new distinct run ID will be generated, and before/after metric impact will be tracked.
+            </div>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.75rem;">
+            Active rules ready to apply: <strong id="rerunRulesCount">0</strong>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btnCancelRerun">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnExecuteRerun">Execute Rerun</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Reconciliation Rule Modal (Structured Builder) -->
+    <div class="modal-overlay hidden" id="addRuleModal">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <div>
+            <h3 class="modal-title">Add Reconciliation Rule</h3>
+            <p class="modal-subtitle">Define a safe, generalized reconciliation predicate to apply before AI candidate classification.</p>
+          </div>
+          <button type="button" class="btn-modal-close" id="btnCloseAddRuleModal">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <form id="addRuleForm" class="correction-form">
+            <div class="form-group">
+              <label for="ruleName">Rule Name <span class="required">*</span></label>
+              <input type="text" id="ruleName" class="input-text" placeholder="e.g. Merchant Gamma split settlement tolerance rule" required minlength="3">
+            </div>
+
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="ruleCounterparty">Source Counterparty Pattern <span class="text-muted">(Optional)</span></label>
+                <input type="text" id="ruleCounterparty" class="input-text" placeholder="e.g. Merchant Gamma">
+                <small class="text-muted">Matches counterparty name across gateway transactions</small>
+              </div>
+
+              <div class="form-group">
+                <label for="ruleRefPrefix">Reference Prefix <span class="text-muted">(Optional)</span></label>
+                <input type="text" id="ruleRefPrefix" class="input-text" placeholder="e.g. REF-">
+                <small class="text-muted">Matches common source reference prefix</small>
+              </div>
+            </div>
+
+            <div class="form-grid-3">
+              <div class="form-group">
+                <label for="ruleCurrency">Currency <span class="text-muted">(Optional)</span></label>
+                <input type="text" id="ruleCurrency" class="input-text" placeholder="e.g. INR">
+              </div>
+
+              <div class="form-group">
+                <label for="ruleMaxAmountDiff">Max Amount Difference <span class="text-muted">(₹ Optional)</span></label>
+                <input type="number" id="ruleMaxAmountDiff" class="input-text" step="0.01" min="0" placeholder="0.00">
+              </div>
+
+              <div class="form-group">
+                <label for="ruleMaxDelayDays">Max Settlement Delay <span class="text-muted">(Days Optional)</span></label>
+                <input type="number" id="ruleMaxDelayDays" class="input-text" step="1" min="0" placeholder="0">
+              </div>
+            </div>
+
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="ruleRelType">Resulting Relationship Type <span class="required">*</span></label>
+                <select id="ruleRelType" class="select-filter" required>
+                  <option value="1:1">1:1 (Single Source to Single Target)</option>
+                  <option value="1:N">1:N (Single Source split into Multiple Targets)</option>
+                  <option value="N:1">N:1 (Multiple Sources aggregated to Single Target)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="ruleOutcome">Resulting Outcome <span class="required">*</span></label>
+                <select id="ruleOutcome" class="select-filter" required>
+                  <option value="MATCHED">MATCHED</option>
+                  <option value="EXCEPTION">EXCEPTION</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="ruleExceptionTypeGroup" style="display: none;">
+              <label for="ruleExceptionType">Resulting Exception Type</label>
+              <select id="ruleExceptionType" class="select-filter">
+                <option value="ROUNDING_DIFFERENCE">Rounding Difference</option>
+                <option value="FEE_DEDUCTION">Fee Deduction</option>
+                <option value="SETTLEMENT_DELAY">Settlement Delay</option>
+                <option value="DUPLICATE">Duplicate</option>
+                <option value="POSSIBLE_DUPLICATE">Possible Duplicate</option>
+                <option value="CURRENCY_MISMATCH">Currency Mismatch</option>
+                <option value="MISSING_RECORD">Missing Record (Orphan)</option>
+                <option value="UNKNOWN">Unknown</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="ruleDescription">Operator Description / Rationale <span class="text-muted">(Optional)</span></label>
+              <textarea id="ruleDescription" rows="2" class="input-text" placeholder="Provide operational justification or policy reference for this rule..."></textarea>
+            </div>
+
+            <!-- Live Structured Rule Preview -->
+            <div class="rule-preview-card">
+              <div class="rule-preview-header">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span>RULE PREVIEW</span>
+              </div>
+              <div class="rule-preview-body" id="rulePreviewBody">
+                <div class="rule-preview-row"><span>Counterparty:</span> <strong id="prevCp">Wildcard (Any)</strong></div>
+                <div class="rule-preview-row"><span>Currency:</span> <strong id="prevCurr">Wildcard (Any)</strong></div>
+                <div class="rule-preview-row"><span>Max Amount Difference:</span> <strong id="prevMaxDiff">None</strong></div>
+                <div class="rule-preview-row"><span>Max Settlement Delay:</span> <strong id="prevMaxDelay">None</strong></div>
+                <div class="rule-preview-row"><span>Relationship Type:</span> <strong id="prevRelType">1:1</strong></div>
+                <div class="rule-preview-row"><span>Outcome:</span> <strong id="prevOutcome">MATCHED</strong></div>
+              </div>
+            </div>
+
+            <div id="addRuleValidationAlert" class="alert-box alert-danger hidden"></div>
+            <div id="addRuleValidationSuccess" class="alert-box alert-success hidden"></div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" id="btnCancelAddRule">Cancel</button>
+              <button type="button" class="btn btn-outline" id="btnValidateRule">Validate Rule</button>
+              <button type="submit" class="btn btn-primary" id="btnSubmitAddRule">Create Rule</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rule Detail Inspection Modal -->
+    <div class="modal-overlay hidden" id="ruleDetailModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 class="modal-title">Reconciliation Rule Inspection</h3>
+          <button class="btn-modal-close" id="btnCloseRuleDetailModal">&times;</button>
+        </div>
+        <div class="modal-body" id="ruleDetailBody">
+          <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btnCloseRuleDetailBtn">Close</button>
+          <button type="button" class="btn btn-primary" id="btnToggleActiveInDetail">Toggle Active</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
   </div>
 
-  <script src="/static/app.js?v=20260901"></script>
+  <script src="/static/app.js?v=20260903-r1"></script>
 </body>
 
 </html>
+
+

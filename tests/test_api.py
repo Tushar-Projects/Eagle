@@ -326,3 +326,197 @@ class TestFastApiEndpoints:
         response = api_client.post("/runs", files=files)
         assert response.status_code == 400
         assert "failed" in response.json()["detail"].lower()
+
+    def test_get_run_records_and_filtering(self, api_client):
+        payload = {
+            "source_records": [
+                {"payment_id": "G-REC-1", "amount": "150.00", "created_at": "2025-01-01"}
+            ],
+            "target_records": [
+                {"bank_reference": "B-REC-1", "settlement_amount": "150.00", "posting_date": "2025-01-01"}
+            ],
+        }
+        res_post = api_client.post("/runs/json", json=payload)
+        assert res_post.status_code == 201
+        run_id = res_post.json()["run_id"]
+
+
+        # 1. Fetch all records
+        res_all = api_client.get(f"/runs/{run_id}/records")
+        assert res_all.status_code == 200
+        data_all = res_all.json()
+        assert data_all["total"] == 2
+        sources = {r["source"] for r in data_all["records"]}
+        assert sources == {"GATEWAY", "BANK"}
+
+        # 2. Filter by GATEWAY
+        res_gtw = api_client.get(f"/runs/{run_id}/records?source=GATEWAY")
+        assert res_gtw.status_code == 200
+        data_gtw = res_gtw.json()
+        assert data_gtw["total"] == 1
+        assert data_gtw["records"][0]["record_id"] == "G-REC-1"
+
+        # 3. Filter by BANK
+        res_bank = api_client.get(f"/runs/{run_id}/records?source=BANK")
+        assert res_bank.status_code == 200
+        data_bank = res_bank.json()
+        assert data_bank["total"] == 1
+        assert data_bank["records"][0]["record_id"] == "B-REC-1"
+
+        # 4. Unknown run returns 404
+        res_404 = api_client.get("/runs/RUN-NONEXISTENT/records")
+        assert res_404.status_code == 404
+
+    def test_dashboard_correction_and_rules_elements(self, api_client):
+        res = api_client.get("/")
+        assert res.status_code == 200
+        html = res.text
+
+        # Tab button & rerun button
+        assert 'data-tab="tab-corrections"' in html
+        assert 'id="btnRerunWithRules"' in html
+        assert 'id="btnTabRerunWithRules"' in html
+        assert 'id="btnOpenAddRuleModal"' in html
+        assert 'id="statActiveRules"' in html
+        assert 'id="statCorrections"' in html
+        assert 'id="ruleScopeIndicator"' in html
+
+        # Table Action headers
+        assert "<th>Action</th>" in html
+
+        # Panes & tables
+        assert 'id="tab-corrections"' in html
+        assert 'id="correctionsTable"' in html
+        assert 'id="rulesTable"' in html
+        assert 'id="ruleImpactContainer"' in html
+
+        # Modals
+        assert 'id="correctionModal"' in html
+        assert 'id="origRelId"' in html
+        assert 'id="corrOutcome"' in html
+        assert 'id="corrExceptionType"' in html
+        assert 'id="corrReason"' in html
+        assert 'id="corrGenerateRule"' in html
+        assert 'id="corrSourcePicker"' in html
+        assert 'id="corrTargetPicker"' in html
+        assert 'id="rerunConfirmModal"' in html
+        assert 'id="correctionDetailModal"' in html
+        assert 'id="addRuleModal"' in html
+        assert 'id="ruleName"' in html
+        assert 'id="ruleCounterparty"' in html
+        assert 'id="rulePreviewContent"' or 'id="rulePreviewBody"' in html
+        assert 'id="btnValidateRule"' in html
+        assert 'id="btnSubmitAddRule"' in html
+        assert 'id="ruleDetailModal"' in html
+
+        # Cache-busting version check
+        assert 'styles.css?v=20260903' in html
+        assert 'app.js?v=20260903' in html
+
+    def test_static_assets_contain_correction_and_rule_handlers(self, api_client):
+        res_js = api_client.get("/static/app.js")
+        assert res_js.status_code == 200
+        js = res_js.text
+        assert "openCorrectionModal" in js
+        assert "submitCorrectionForm" in js
+        assert "openRerunModal" in js
+        assert "executeRerun" in js
+        assert "renderRuleImpact" in js
+        assert "renderRulesTable" in js
+        assert "renderCorrectionsHistory" in js
+        assert "submitCorrection" in js
+        assert "rerunWithRules" in js
+        assert "RULE APPLIED" in js
+        assert "openAddRuleModal" in js
+        assert "closeAddRuleModal" in js
+        assert "updateRulePreview" in js
+        assert "validateRuleForm" in js
+        assert "submitAddRuleForm" in js
+        assert "openRuleDetailModal" in js
+
+        res_css = api_client.get("/static/styles.css")
+        assert res_css.status_code == 200
+        css = res_css.text
+        assert ".btn-correct" in css
+        assert ".modal-lg" in css
+        assert ".original-result-box" in css
+        assert ".record-picker-container" in css
+        assert ".impact-card" in css
+        assert ".impact-table" in css
+        assert ".switch-toggle" in css
+        assert ".badge-pill-purple" in css
+        assert ".panel-header-banner" in css
+        assert ".rule-preview-card" in css
+
+    def test_structured_rule_validation_and_creation(self, api_client):
+        # 1. Validation of valid rule definition
+        valid_payload = {
+            "name": "Merchant Gamma Tolerance Rule",
+            "description": "Allows INR 2 tolerance for Merchant Gamma",
+            "source_counterparty_pattern": "Merchant Gamma",
+            "currency": "INR",
+            "max_amount_difference": "2.00",
+            "max_settlement_delay_days": 1,
+            "target_action": "PREFER_CANDIDATE",
+            "resulting_outcome": "MATCHED",
+            "confidence": 1.0,
+            "is_active": True,
+        }
+        res_val = api_client.post("/rules/validate", json=valid_payload)
+        assert res_val.status_code == 200
+        val_data = res_val.json()
+        assert val_data["valid"] is True
+        assert "Merchant Gamma" in val_data["summary"]
+
+        # 2. Validation of invalid rule with record ID memorization
+        bad_id_payload = dict(valid_payload)
+        bad_id_payload["source_counterparty_pattern"] = "GTW-101"
+        res_val_bad = api_client.post("/rules/validate", json=bad_id_payload)
+        assert res_val_bad.status_code == 200
+        assert res_val_bad.json()["valid"] is False
+        assert any("memorize exact record ids" in e.lower() for e in res_val_bad.json()["errors"])
+
+        # 3. Validation of rule with no predicates
+        empty_pred_payload = {
+            "name": "Empty Predicate Rule",
+            "target_action": "PREFER_CANDIDATE",
+            "resulting_outcome": "MATCHED",
+            "confidence": 1.0,
+        }
+        res_val_empty = api_client.post("/rules/validate", json=empty_pred_payload)
+        assert res_val_empty.status_code == 200
+        assert res_val_empty.json()["valid"] is False
+
+        # 4. Successful rule creation
+        res_create = api_client.post("/rules", json=valid_payload)
+        assert res_create.status_code == 201
+        created_rule = res_create.json()
+        assert created_rule["rule_id"].startswith("RULE-")
+        assert created_rule["name"] == "Merchant Gamma Tolerance Rule"
+        assert created_rule["is_active"] is True
+        rule_id = created_rule["rule_id"]
+
+        # 5. Rule appears in GET /rules
+        res_list = api_client.get("/rules")
+        assert res_list.status_code == 200
+        rule_ids = [r["rule_id"] for r in res_list.json()["rules"]]
+        assert rule_id in rule_ids
+
+        # 6. Rule can be toggled to inactive
+        res_toggle = api_client.post(f"/rules/{rule_id}/toggle", json={"is_active": False})
+        assert res_toggle.status_code == 200
+        assert res_toggle.json()["is_active"] is False
+
+        # 7. Check GET /rules?active_only=true excludes inactive rule
+        res_active_only = api_client.get("/rules?active_only=true")
+        active_ids = [r["rule_id"] for r in res_active_only.json()["rules"]]
+        assert rule_id not in active_ids
+
+        # Toggle back to active
+        api_client.post(f"/rules/{rule_id}/toggle", json={"is_active": True})
+
+        # 8. Creation rejection for exact record ID
+        res_create_bad = api_client.post("/rules", json=bad_id_payload)
+        assert res_create_bad.status_code == 422
+
+

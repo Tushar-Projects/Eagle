@@ -39,7 +39,7 @@ def reconcile(
                 unmatched_targets.remove(t)
 
     # Helper for 1:1 stages
-    def _run_1_to_1_stage(match_func, is_stage_4=False, collect_ambiguous=False):
+    def _run_1_to_1_stage(match_func, is_stage_3=False, is_stage_4=False, collect_ambiguous=False):
         matches_found = []
         candidates_for_source = {}
 
@@ -49,10 +49,14 @@ def reconcile(
                 if is_stage_4:
                     is_match, is_rounding, is_fee = match_func(s, t)
                     if is_match:
-                        candidates.append((t, is_rounding, is_fee))
+                        candidates.append((t, is_rounding, is_fee, False))
+                elif is_stage_3:
+                    is_cand, has_conflict = match_func(s, t)
+                    if is_cand:
+                        candidates.append((t, False, False, has_conflict))
                 else:
                     if match_func(s, t):
-                        candidates.append((t, False, False))
+                        candidates.append((t, False, False, False))
             candidates_for_source[s.record_id] = candidates
 
         # Check for claims per target
@@ -65,9 +69,9 @@ def reconcile(
         for s in list(unmatched_sources):
             candidates = candidates_for_source.get(s.record_id, [])
             if len(candidates) == 1:
-                t, is_rounding, is_fee = candidates[0]
+                t, is_rounding, is_fee, has_conflict = candidates[0]
                 claims = len(target_claims.get(t.record_id, []))
-                if claims == 1:
+                if claims == 1 and not has_conflict:
                     matches_found.append((s, t, is_rounding, is_fee))
                 elif collect_ambiguous:
                     candidate_1_to_1_options.append(
@@ -77,7 +81,7 @@ def reconcile(
                         )
                     )
             elif len(candidates) > 1 and collect_ambiguous:
-                for t, is_rounding, is_fee in candidates:
+                for t, is_rounding, is_fee, has_conflict in candidates:
                     candidate_1_to_1_options.append(
                         CandidateRelationshipOption(
                             source_record_ids=[s.record_id],
@@ -161,7 +165,7 @@ def reconcile(
     _run_1_to_1_stage(is_stage2_normalized_match)
 
     # --- Stage 3: Amount/Date/Currency Match ---
-    _run_1_to_1_stage(is_stage3_financial_match, collect_ambiguous=True)
+    _run_1_to_1_stage(is_stage3_financial_match, is_stage_3=True, collect_ambiguous=True)
 
     # --- Stage 4: Fee/Net Match ---
     _run_1_to_1_stage(is_stage4_fee_match, is_stage_4=True, collect_ambiguous=True)

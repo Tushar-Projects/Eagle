@@ -131,18 +131,16 @@ class LlamaServerProvider(LLMProvider):
                 lines.append(f"  Targets: {opt.target_record_ids}")
         lines.append("")
         lines.append("CRITICAL INSTRUCTIONS:")
-        lines.append("1. Select exactly one candidate option by its integer index (selected_candidate_index) when the evidence supports a candidate.")
-        lines.append("2. Return selected_candidate_index = null when the evidence does not support a confident selection. Do NOT guess.")
-        lines.append("3. OPTION ORDER HAS NO SEMANTIC MEANING. Option 0 is NOT a default or preferred option.")
-        lines.append("4. Use transaction metadata (references, counterparties, descriptions, dates, amounts) to cross-reference and distinguish between competing options.")
-        lines.append("5. Respect relationship direction:")
-        lines.append("   - 1 source record + multiple target records = 1:N")
-        lines.append("   - Multiple source records + 1 target record = N:1")
-        lines.append("   - 1 source record + 1 target record = 1:1")
-        lines.append("6. If selecting MATCHED, reconciled_amount must equal the total matched source amount.")
-        lines.append("7. If ambiguity cannot be resolved from the supplied evidence, abstain with selected_candidate_index = null rather than guessing.")
+        lines.append("1. AMBIGUITY ABSTENTION: When candidate_options contains more than 1 option (e.g. multiple competing targets, conflicting counterparties, or competing 1:1 vs 1:N split aggregations), this represents an unresolved business ambiguity that must be decided by human operator rules. You MUST ABSTAIN: do not choose any option; return selected_candidate_index = null, relationship_type = '1:1', outcome = 'EXCEPTION', exception_type = 'POSSIBLE_DUPLICATE', severity = 'MEDIUM', flag_for_review = true, and state in reasoning that competing candidate options require human operator review.")
+        lines.append("2. SINGLE OPTION EVALUATION: When exactly 1 candidate option exists and the evidence supports it, return selected_candidate_index = 0, outcome = 'MATCHED', reconciled_amount = total matched source amount. If not supported, return selected_candidate_index = null, outcome = 'EXCEPTION'.")
+        lines.append("3. OPTION ORDER HAS NO SEMANTIC MEANING. Option 0 is NEVER a default choice.")
+        lines.append("4. Respect relationship direction: 1 source + multiple targets = 1:N; multiple sources + 1 target = N:1; 1 source + 1 target = 1:1.")
+        lines.append("5. If selecting MATCHED, reconciled_amount must equal the total matched source amount.")
         lines.append("")
-        lines.append('Output JSON format:\n{"selected_candidate_index": 0 or null, "relationship_type": "1:1" or "1:N" or "N:1", "outcome": "MATCHED" or "EXCEPTION", "exception_type": null or "...", "severity": null or "...", "flag_for_review": true/false, "reconciled_amount": "5000.00", "reasoning": "...", "confidence": 0.0-1.0}')
+        if case.candidate_options and len(case.candidate_options) > 1:
+            lines.append('Output JSON format:\n{"selected_candidate_index": null, "relationship_type": "1:1", "outcome": "EXCEPTION", "exception_type": "POSSIBLE_DUPLICATE", "severity": "MEDIUM", "flag_for_review": true, "reconciled_amount": "0.00", "reasoning": "...", "confidence": 0.9}')
+        else:
+            lines.append('Output JSON format:\n{"selected_candidate_index": 0 or null, "relationship_type": "1:1" or "1:N" or "N:1", "outcome": "MATCHED" or "EXCEPTION", "exception_type": null or "...", "severity": null or "...", "flag_for_review": true/false, "reconciled_amount": "5000.00", "reasoning": "...", "confidence": 0.0-1.0}')
         return "\n".join(lines)
 
     @staticmethod
@@ -232,5 +230,5 @@ RULES:
 - You MUST use only these relationship types: 1:1, 1:N, N:1.
 - You MUST use only these exception types: SETTLEMENT_DELAY, FEE_DEDUCTION, ROUNDING_DIFFERENCE, PARTIAL_SETTLEMENT, SPLIT_SETTLEMENT, DUPLICATE, MISSING_RECORD, CURRENCY_MISMATCH, POSSIBLE_DUPLICATE, UNKNOWN.
 - You MUST NOT override deterministic financial facts (amounts, currencies, dates).
-- For CANDIDATE_SELECTION: You are selecting among deterministic candidate options. Return the zero-based index of exactly one candidate option, or null if no valid counterpart exists. Do not construct participant IDs. Do not combine records from different options.
+- For CANDIDATE_SELECTION: You are selecting among candidate options. When candidate options are ambiguous (competing counterparties or 1:1 vs 1:N split settlement alternatives), return selected_candidate_index = null. Do not construct participant IDs. Do not combine records from different options.
 - Output valid JSON conforming to the requested schema."""
