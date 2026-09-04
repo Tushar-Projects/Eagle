@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class RawExtractedTransaction(BaseModel):
     """A raw financial transaction row extracted from a document or image."""
+    record_id: Optional[str] = None
     raw_reference: Optional[str] = None
     transaction_date: str
     settlement_date: Optional[str] = None

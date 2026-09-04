@@ -363,9 +363,10 @@ def test_deterministic_record_id_and_source_assignment():
     assert bnk_rec.source == "BANK"
     assert bnk_rec.record_id.startswith("DOC-BNK-")
 
-    # 2. Exact preservation when visible raw_reference is present
+    # 2. Exact preservation when visible record_id is present
     raw_visible = RawExtractedTransaction(
-        raw_reference="SRC-ORBIT-001",
+        record_id="SRC-ORBIT-001",
+        raw_reference="ORBIT-2026-001",
         transaction_date="2025-01-15",
         amount="1250.00",
         currency="INR",
@@ -374,6 +375,20 @@ def test_deterministic_record_id_and_source_assignment():
     rec_visible = assemble_canonical_record(raw_visible, source_type="GATEWAY", document_id="doc123.pdf", row_index=1)
     assert rec_visible.record_id == "SRC-ORBIT-001"
     assert rec_visible.transaction_id == "SRC-ORBIT-001"
+    assert rec_visible.source_reference == "ORBIT-2026-001"
+
+    # 3. Fallback when only reference is present without record_id
+    raw_ref_only = RawExtractedTransaction(
+        record_id=None,
+        raw_reference="REF-ONLY-123",
+        transaction_date="2025-01-15",
+        amount="1250.00",
+        currency="INR",
+        confidence=0.90,
+    )
+    rec_ref_only = assemble_canonical_record(raw_ref_only, source_type="GATEWAY", document_id="doc123.pdf", row_index=1)
+    assert rec_ref_only.record_id.startswith("DOC-GTW-")
+    assert rec_ref_only.source_reference == "REF-ONLY-123"
 
 
 def test_low_confidence_propagation():

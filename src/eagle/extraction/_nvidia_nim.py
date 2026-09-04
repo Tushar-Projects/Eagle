@@ -7,6 +7,8 @@ using multimodal vision models such as meta/llama-3.2-11b-vision-instruct.
 import base64
 import json
 import logging
+import os
+import re
 from typing import Optional
 
 import httpx
@@ -25,7 +27,7 @@ def build_vision_prompt_instructions() -> str:
 Your task is to extract all individual transaction rows from the supplied financial statement, receipt, ledger, or screenshot table.
 
 CRITICAL EXTRACTION RULES:
-1. Treat the image as a financial transaction table/document. Read EVERY visible transaction row.
+1. Treat the image as a financial transaction table/document. Read EVERY visible transaction row. Return one transaction object for every visible transaction row.
 2. Read values directly from table cells horizontally across each row. Associate each value only with the column header for that row. Do not infer values from nearby rows or different rows.
 3. DO NOT extract:
    - opening balances / balance b/f
@@ -33,8 +35,18 @@ CRITICAL EXTRACTION RULES:
    - totals, subtotals, grand totals, page totals
    - column headers or table header rows
    - bank/merchant account metadata or statement headers
-4. For each transaction row:
-   - If a source record ID or reference ID is visible in the image (e.g. SRC-ORBIT-001, BANK-ORBIT-01, TXN-101), copy it character-for-character into "raw_reference". Do not generate a replacement ID.
+4. DISTINGUISH RECORD ID AND REFERENCE:
+   - "record_id" and "reference" are DIFFERENT fields:
+     * The column named "record_id", "Record ID", "Transaction ID", "Payment ID", "Bank Reference" (when acting as row ID), or "ID" is the "record_id".
+     * The column named "reference", "Reference", "Payment Reference", "Merchant Reference", "Txn Ref", "Narration", or equivalent is the "reference".
+     * NEVER put the Reference column value into "record_id".
+     * NEVER put the Record ID column value into "reference" when both are separately visible.
+     * Preserve "record_id" exactly as visible (e.g. "SRC-ORBIT-001", "BANK-ORBIT-01").
+     * Preserve "reference" exactly as visible (e.g. "ORBIT-2026-001").
+     * Multiple rows may legitimately share the same reference. Shared references do NOT mean duplicate records.
+5. For each transaction row:
+   - If a source record ID is visible, copy it character-for-character into "record_id", otherwise null.
+   - If a reference is visible, copy it character-for-character into "reference", otherwise null.
    - Preserve transaction date when visible (YYYY-MM-DD, DD/MM/YYYY, or DD-MM-YYYY).
    - Preserve settlement date if visible, otherwise null.
    - Preserve numeric monetary amount exactly as shown (e.g. "18500", "7500.00", "11,000.00", "₹ 18,500").
@@ -44,19 +56,20 @@ CRITICAL EXTRACTION RULES:
    - Preserve transaction_type ("PAYMENT", "CREDIT", "DEBIT", "REFUND") if visible or inferred from debit/credit columns.
    - Preserve explicit fee amount if broken out, otherwise null.
    - Provide a confidence float between 0.0 and 1.0 representing visual extraction clarity.
-5. NEVER invent missing fields. Return null when a field is genuinely unavailable. Do not merge separate rows or skip rows.
-6. Return clean structured JSON only in the following schema:
+6. NEVER invent missing fields. Return null when a field is genuinely unavailable. Do not merge separate rows or skip rows.
+7. Return clean structured JSON only in the following schema:
 {
   "transactions": [
     {
-      "raw_reference": "...",
-      "transaction_date": "...",
+      "record_id": "BANK-ORBIT-01",
+      "reference": "ORBIT-2026-001",
+      "transaction_date": "2026-09-04",
       "settlement_date": null,
-      "amount": "...",
+      "amount": "11000",
       "currency": "INR",
-      "counterparty": "...",
-      "narration": "...",
-      "transaction_type": "...",
+      "counterparty": "Merchant-Orbit",
+      "narration": "ORBIT-2026-001",
+      "transaction_type": "CREDIT",
       "fee": null,
       "confidence": 0.95
     }
@@ -66,11 +79,14 @@ Do not include any prose, markdown explanations, or commentary outside the JSON 
 
 
 def strip_fences(text: str) -> str:
-    """Remove markdown code fences if present."""
+    """Remove markdown code fences or extract JSON from text even if preceded by prose."""
     s = text.strip()
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
     if s.startswith("```"):
         lines = s.split("\n")
-        if lines[0].startswith("```"):
+        if lines and lines[0].startswith("```"):
             lines = lines[1:]
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
@@ -84,7 +100,14 @@ def parse_vision_json_response(content_str: str, filename: str, extraction_metho
     try:
         parsed = json.loads(clean_text)
     except Exception as e:
-        raise ExtractionValidationError(f"Malformed JSON returned by vision extractor: {e}") from e
+        json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", clean_text)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+            except Exception:
+                raise ExtractionValidationError(f"Malformed JSON returned by vision extractor: {e}") from e
+        else:
+            raise ExtractionValidationError(f"Malformed JSON returned by vision extractor: {e}") from e
 
     raw_list: list[dict] = []
     if isinstance(parsed, dict):
@@ -108,23 +131,32 @@ def parse_vision_json_response(content_str: str, filename: str, extraction_metho
         if not isinstance(item, dict):
             continue
 
-        text_signature = f"{item.get('raw_reference', '')} {item.get('narration', '')} {item.get('counterparty', '')}".strip()
+        text_signature = f"{item.get('record_id', '')} {item.get('reference', '')} {item.get('raw_reference', '')} {item.get('narration', '')} {item.get('counterparty', '')}".strip()
         if text_signature and is_non_transaction_row(text_signature):
             warnings.append(f"Row {idx} filtered: recognized as header or non-transaction balance.")
             continue
 
         try:
-            raw_ref = (
-                item.get("raw_reference")
-                or item.get("reference")
-                or item.get("record_id")
+            raw_record_id = (
+                item.get("record_id")
                 or item.get("transaction_id")
                 or item.get("payment_id")
-                or item.get("bank_reference")
                 or item.get("id")
             )
+            raw_ref = (
+                item.get("reference")
+                or item.get("raw_reference")
+                or item.get("payment_reference")
+                or item.get("bank_reference")
+                or item.get("external_reference")
+            )
+
+            rec_id_str = str(raw_record_id).strip() if (raw_record_id is not None and str(raw_record_id).strip()) else None
+            ref_str = str(raw_ref).strip() if (raw_ref is not None and str(raw_ref).strip()) else None
+
             raw_tx = RawExtractedTransaction(
-                raw_reference=str(raw_ref).strip() if raw_ref is not None else None,
+                record_id=rec_id_str,
+                raw_reference=ref_str,
                 transaction_date=str(item.get("transaction_date") or item.get("date") or item.get("created_at") or item.get("posting_date") or ""),
                 settlement_date=str(item.get("settlement_date") or item.get("value_date")) if (item.get("settlement_date") or item.get("value_date")) else None,
                 amount=str(item.get("amount") or item.get("settlement_amount") or item.get("gross_amount") or ""),
