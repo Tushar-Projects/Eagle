@@ -339,8 +339,9 @@ def test_scanned_pdf_vision_fallback():
 # -------------------------------------------------------------------------
 
 def test_deterministic_record_id_and_source_assignment():
+    # 1. Fallback when raw_reference is absent / None
     raw = RawExtractedTransaction(
-        raw_reference="TXN-101",
+        raw_reference=None,
         transaction_date="2025-01-15",
         settlement_date="2025-01-16",
         amount="1250.00",
@@ -361,6 +362,18 @@ def test_deterministic_record_id_and_source_assignment():
     bnk_rec = assemble_canonical_record(raw, source_type="BANK", document_id="doc123.pdf", row_index=2)
     assert bnk_rec.source == "BANK"
     assert bnk_rec.record_id.startswith("DOC-BNK-")
+
+    # 2. Exact preservation when visible raw_reference is present
+    raw_visible = RawExtractedTransaction(
+        raw_reference="SRC-ORBIT-001",
+        transaction_date="2025-01-15",
+        amount="1250.00",
+        currency="INR",
+        confidence=0.90,
+    )
+    rec_visible = assemble_canonical_record(raw_visible, source_type="GATEWAY", document_id="doc123.pdf", row_index=1)
+    assert rec_visible.record_id == "SRC-ORBIT-001"
+    assert rec_visible.transaction_id == "SRC-ORBIT-001"
 
 
 def test_low_confidence_propagation():

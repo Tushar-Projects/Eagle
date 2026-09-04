@@ -202,8 +202,9 @@ def assemble_canonical_record(
 
     prefix = "GTW" if source_upper == "GATEWAY" else ("BNK" if source_upper == "BANK" else "CAN")
     doc_hash = hashlib.md5(document_id.encode("utf-8")).hexdigest()[:6]
-    record_id = f"DOC-{prefix}-{doc_hash}-{row_index:03d}"
-    txn_id = raw.raw_reference or record_id
+    fallback_id = f"DOC-{prefix}-{doc_hash}-{row_index:03d}"
+    record_id = raw.raw_reference.strip() if (raw.raw_reference and raw.raw_reference.strip()) else fallback_id
+    txn_id = record_id
 
     # 2. Amount and Currency Normalization
     amount, inferred_type = normalize_amount(raw.amount)
