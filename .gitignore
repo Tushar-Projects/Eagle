@@ -14,12 +14,19 @@ ENV/
 *.sqlite
 *.sqlite3
 chroma_data/
+data/chroma/
+data/*.db
+
+# Logs
+*.log
+logs/
 
 # Python Cache & Bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+src/*.egg-info/
 dist/
 build/
 .eggs/
@@ -28,6 +35,9 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Development & Scratch
+scratch/
 
 # IDE & Editor Files
 .vscode/
