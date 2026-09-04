@@ -719,13 +719,17 @@ function renderRulesTable() {
 
   rules.forEach(r => {
     const tr = document.createElement('tr');
-    const predicates = [
-      r.source_counterparty_pattern ? `CP: "${r.source_counterparty_pattern}"` : null,
-      r.reference_prefix ? `Ref: "${r.reference_prefix}"` : null,
-      r.currency ? `Curr: ${r.currency}` : null,
-      r.max_amount_difference ? `MaxDiff: ₹${r.max_amount_difference}` : null,
-      r.max_settlement_delay_days ? `MaxDelay: ${r.max_settlement_delay_days}d` : null,
-    ].filter(Boolean).join(' | ') || 'ANY (Wildcard)';
+    const predicateChips = [
+      r.source_counterparty_pattern ? `<span class="predicate-tag"><span class="pred-k">CP</span> <span class="pred-v">"${r.source_counterparty_pattern}"</span></span>` : null,
+      r.reference_prefix ? `<span class="predicate-tag"><span class="pred-k">Ref</span> <span class="pred-v">"${r.reference_prefix}"</span></span>` : null,
+      r.currency ? `<span class="predicate-tag"><span class="pred-k">Curr</span> <span class="pred-v">${r.currency}</span></span>` : null,
+      r.max_amount_difference ? `<span class="predicate-tag"><span class="pred-k">Tol</span> <span class="pred-v">₹${r.max_amount_difference}</span></span>` : null,
+      r.max_settlement_delay_days ? `<span class="predicate-tag"><span class="pred-k">Delay</span> <span class="pred-v">${r.max_settlement_delay_days}d</span></span>` : null,
+    ].filter(Boolean);
+
+    const predicatesHtml = predicateChips.length > 0
+      ? `<div class="predicate-tag-group">${predicateChips.join('')}</div>`
+      : '<span class="text-muted">Wildcard (Any)</span>';
 
     const resultingBadge = r.resulting_outcome === 'MATCHED'
       ? '<span class="badge-pill badge-pill-green">MATCHED</span>'
@@ -744,7 +748,7 @@ function renderRulesTable() {
       <td><strong>${r.name}</strong></td>
       <td>${statusBadge}</td>
       <td><span class="scope-pill-badge" style="font-size:0.7rem;">GLOBAL RULE</span></td>
-      <td><code style="font-size:0.75rem;">${predicates}</code></td>
+      <td>${predicatesHtml}</td>
       <td>${resultingBadge}</td>
       <td>${(r.confidence * 100).toFixed(0)}%</td>
       <td>${createdFrom}</td>
@@ -2089,10 +2093,10 @@ function initQaPanel() {
       qaLatencyMeta.textContent = `Retrieval: ${response.retrieval_latency_ms}ms | Generation: ${response.generation_latency_ms}ms`;
 
       if (response.has_sufficient_evidence) {
-        qaEvidenceStatus.textContent = `✓ Grounded in ${response.sources.length} Verified Sources`;
+        qaEvidenceStatus.textContent = `Grounded in ${response.sources.length} Verified Sources`;
         qaEvidenceStatus.style.color = 'var(--accent-emerald)';
       } else {
-        qaEvidenceStatus.textContent = '⚠️ Insufficient Evidence';
+        qaEvidenceStatus.textContent = 'Insufficient Evidence';
         qaEvidenceStatus.style.color = 'var(--accent-amber)';
       }
 

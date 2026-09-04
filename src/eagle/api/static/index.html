@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=20260904-r3">
+  <link rel="stylesheet" href="/static/styles.css?v=20260904-r5">
 
 
 </head>
@@ -21,7 +21,7 @@
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
           </svg>
           <span class="brand-title">EAGLE</span>
-          <span class="brand-subtitle">AI Reconciliation Controller</span>
+          <span class="brand-subtitle">Reconciliation Control Center</span>
         </div>
         <div class="engine-status" id="engineStatus">
           <span class="status-dot pulsing"></span>
@@ -31,7 +31,7 @@
 
       <div class="header-right">
         <div class="run-selector-container">
-          <label for="runSelect" class="selector-label">Run History:</label>
+          <label for="runSelect" class="selector-label">CURRENT RUN</label>
           <select id="runSelect" class="run-dropdown" title="Select Historical Run">
             <option value="">Loading historical runs...</option>
           </select>
@@ -354,11 +354,11 @@
             </div>
 
             <div class="qa-suggestions">
-              <button type="button" class="qa-chip" data-query="What is the match rate for this run?">📊 Match Rate</button>
-              <button type="button" class="qa-chip" data-query="What exceptions occurred in this run?">⚠️ Exceptions</button>
-              <button type="button" class="qa-chip" data-query="Which learned reconciliation rules are active?">⚙️ Active Rules</button>
-              <button type="button" class="qa-chip" data-query="Why did the rerun improve reconciliation metrics?">🔄 Rerun Impact</button>
-              <button type="button" class="qa-chip" data-query="What happened to transaction BANK-C06?">🔍 BANK-C06 Record</button>
+              <button type="button" class="qa-chip" data-query="What is the match rate for this run?">Match Rate Summary</button>
+              <button type="button" class="qa-chip" data-query="What exceptions occurred in this run?">Exceptions Breakdown</button>
+              <button type="button" class="qa-chip" data-query="Which learned reconciliation rules are active?">Active Learned Rules</button>
+              <button type="button" class="qa-chip" data-query="Why did the rerun improve reconciliation metrics?">Rerun Metric Impact</button>
+              <button type="button" class="qa-chip" data-query="What happened to transaction BANK-C06?">BANK-C06 Transaction Audit</button>
             </div>
 
             <form id="qaForm" class="qa-form">
@@ -526,7 +526,7 @@
           <div class="quick-demo-box">
             <span>Need sample data?</span>
             <button type="button" class="btn btn-sm btn-secondary" id="btnQuickLoadSynthetic">
-              ⚡ Quick-Load Synthetic Sample Data (40 GTW / 41 Bank)
+              Quick-Load Synthetic Sample Data (40 GTW / 41 Bank)
             </button>
           </div>
 
@@ -922,7 +922,7 @@
         </div>
         <div class="modal-body">
           <div id="ruleDeleteActiveWarning" class="alert-box alert-danger hidden" style="margin-bottom: 1rem;">
-            <strong>⚠️ WARNING:</strong> This rule is currently active and may affect future reconciliation runs.
+            <strong>WARNING:</strong> This rule is currently active and may affect future reconciliation runs.
           </div>
           <div class="orig-box-grid" style="margin-bottom: 1rem;">
             <div><span class="text-muted">Rule ID:</span> <code id="deleteModalRuleId">--</code></div>
@@ -956,7 +956,7 @@
     <div class="toast-container" id="toastContainer"></div>
   </div>
 
-  <script src="/static/app.js?v=20260904-r3"></script>
+  <script src="/static/app.js?v=20260904-r5"></script>
 </body>
 
 </html>
