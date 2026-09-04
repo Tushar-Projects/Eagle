@@ -704,6 +704,43 @@ AI_TIMEOUT_SECONDS=120
 AI_MAX_CONCURRENCY=1
 ```
 
+### AI Providers
+
+Eagle supports multiple AI backends for candidate classification. The default/recommended development path is local llama-server inference, while Gemini and Claude are optional external providers.
+
+| Provider | `AI_PROVIDER` | Execution | Configuration |
+|---|---|---|---|
+| Local llama-server | `llama_server` | Local | `LLAMA_SERVER_URL`, `AI_MODEL` |
+| Mock | `mock` | Local deterministic test provider | None |
+| Google Gemini | `gemini` | External API | `GEMINI_API_KEY` |
+| Anthropic Claude | `claude` | External API | `CLAUDE_API_KEY` |
+
+#### Google Gemini (Optional)
+
+To use Google Gemini for candidate classification:
+
+```env
+AI_PROVIDER=gemini
+GEMINI_API_KEY=<your-key>
+```
+
+Gemini is an optional external AI provider and is not required for Eagle to operate.
+
+#### Anthropic Claude (Optional)
+
+To use Anthropic Claude for candidate classification:
+
+```env
+AI_PROVIDER=claude
+CLAUDE_API_KEY=<your-key>
+```
+
+Claude is an optional external AI provider and is not required for Eagle to operate.
+
+### Vision Providers
+
+Vision extraction operates independently from the AI candidate classification provider:
+
 For NVIDIA NIM vision extraction:
 
 ```env
@@ -714,7 +751,7 @@ NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 VISION_TIMEOUT_SECONDS=60
 ```
 
-If NIM is not being used, leave the provider configured for the local vision backend.
+If NIM is not being used, leave the provider configured for the local vision backend (`VISION_PROVIDER=llama_server` or `VISION_PROVIDER=mock`).
 
 Do not commit `.env` or credentials.
 
@@ -898,7 +935,7 @@ and are excluded from Git.
 
 The system does not grant the QA layer write authority over reconciliation state.
 
-If NVIDIA NIM or another external provider is explicitly configured, the relevant document/image payloads are sent to that provider. Therefore, Eagle should not be described as universally offline when an external provider is enabled.
+If NVIDIA NIM, Google Gemini, Anthropic Claude, or another external provider is explicitly configured, the relevant request payloads are sent to that provider. Therefore, Eagle should not be described as universally offline when an external provider is enabled.
 
 ---
 
