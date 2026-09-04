@@ -655,7 +655,7 @@ The architecture is provider-oriented. Local inference is the normal path; optio
 ### Clone and install
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/Tushar-Projects/Eagle
 cd Eagle
 
 python -m venv .venv
