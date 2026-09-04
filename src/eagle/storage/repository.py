@@ -702,4 +702,40 @@ class Repository:
             )
         return self.get_rule(rule_id)
 
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a reconciliation run and its owned operational records.
+        
+        Preserves global learned rules, unrelated runs, and cross-run data.
+        Returns True if deleted, False if run was not found.
+        """
+        run = self.get_run(run_id)
+        if not run:
+            return False
+
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM records WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM reconciliation_results WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM candidate_decisions WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM operator_corrections WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM audit_logs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+
+        return True
+
+    def delete_rule(self, rule_id: str) -> bool:
+        """Delete a learned reconciliation rule by rule_id.
+        
+        Preserves originating corrections, historical audit events, and runs.
+        Returns True if deleted, False if rule was not found.
+        """
+        rule = self.get_rule(rule_id)
+        if not rule:
+            return False
+
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM reconciliation_rules WHERE rule_id = ?", (rule_id,))
+
+        return True
+
+
 

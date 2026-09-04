@@ -8,8 +8,10 @@ import pytest
 from eagle.models.canonical import CanonicalRecord
 from eagle.models.enums import ExceptionType, ReconciliationOutcome, RelationshipType, Severity
 from eagle.models.reconciliation import ReconciliationResult
+from eagle.rules.models import OperatorCorrection, ReconciliationRule
 from eagle.storage.database import Database, normalize_db_path
 from eagle.storage.repository import Repository
+
 
 
 @pytest.fixture
@@ -242,3 +244,125 @@ class TestDatabaseAndRepository:
 
         assert len(repo.get_records("RUN-2")) == 1
         assert repo.get_records("RUN-2")[0].record_id == "R-2"
+
+    def test_delete_run_success(self, repo):
+        # Create Run A with full operational data
+        repo.create_run(run_id="RUN-DEL-A", status="COMPLETED")
+        repo.save_records("RUN-DEL-A", [
+            CanonicalRecord(
+                record_id="REC-A1", transaction_id="TXN-A1", source="GATEWAY", source_reference="REF-A",
+                amount=Decimal("100"), currency="INR", transaction_date=date(2025, 1, 1),
+                settlement_date=date(2025, 1, 1), counterparty="Alpha", status="C", transaction_type="P"
+            )
+        ])
+        repo.save_results("RUN-DEL-A", [
+            ReconciliationResult(
+                relationship_id="REL-A1",
+                relationship_type=RelationshipType.ONE_TO_ONE,
+                source_record_ids=["REC-A1"],
+                target_record_ids=[],
+                outcome=ReconciliationOutcome.EXCEPTION,
+                reconciled_amount=Decimal("100.00"),
+            )
+        ])
+        repo.save_candidate_decisions("RUN-DEL-A", [
+            {"anchor_record_id": "REC-A1", "candidate_options": [], "selected_candidate_index": None, "validation_status": "UNRESOLVED"}
+        ])
+        repo.save_audit_event("RUN-DEL-A", "RUN_COMPLETED", {"matched": 0})
+        repo.save_correction(OperatorCorrection(
+            correction_id="CORR-A1", run_id="RUN-DEL-A", relationship_id="REL-A1",
+            original_outcome="EXCEPTION", original_exception_type=None,
+            original_source_ids=["REC-A1"], original_target_ids=[],
+            corrected_outcome="MATCHED", corrected_exception_type=None,
+            corrected_source_ids=["REC-A1"], corrected_target_ids=["BANK-A1"],
+            operator_reason="Manual fix", created_at="2025-01-01T00:00:00Z", generated_rule_id="RULE-A1"
+        ))
+
+        # Create Run B and Global Rule to verify non-deletion
+        repo.create_run(run_id="RUN-DEL-B", status="COMPLETED")
+        repo.save_records("RUN-DEL-B", [
+            CanonicalRecord(
+                record_id="REC-B1", transaction_id="TXN-B1", source="GATEWAY", source_reference="REF-B",
+                amount=Decimal("200"), currency="INR", transaction_date=date(2025, 1, 1),
+                settlement_date=date(2025, 1, 1), counterparty="Beta", status="C", transaction_type="P"
+            )
+        ])
+        repo.save_rule(ReconciliationRule(
+            rule_id="RULE-A1", name="Alpha Rule", description="Test",
+            source_counterparty_pattern="Alpha",
+            target_action="PREFER_CANDIDATE",
+            resulting_outcome="MATCHED", confidence=1.0, is_active=True, created_at="2025-01-01T00:00:00Z",
+            source_correction_id="CORR-A1"
+        ))
+
+        # Execute run deletion
+        deleted = repo.delete_run("RUN-DEL-A")
+        assert deleted is True
+
+        # Verify Run A data is completely removed
+        assert repo.get_run("RUN-DEL-A") is None
+        assert len(repo.get_records("RUN-DEL-A")) == 0
+        assert len(repo.get_results("RUN-DEL-A")) == 0
+        assert len(repo.get_candidates("RUN-DEL-A")) == 0
+        assert len(repo.get_audit_logs("RUN-DEL-A")) == 0
+        assert len(repo.get_corrections("RUN-DEL-A")) == 0
+
+        # Verify Run B data is completely intact
+        assert repo.get_run("RUN-DEL-B") is not None
+        assert len(repo.get_records("RUN-DEL-B")) == 1
+
+        # Verify Global Rule is completely intact
+        assert repo.get_rule("RULE-A1") is not None
+
+    def test_delete_run_not_found(self, repo):
+        assert repo.delete_run("NON_EXISTENT_RUN") is False
+
+    def test_delete_rule_success(self, repo):
+        repo.create_run(run_id="RUN-ORIG", status="COMPLETED")
+        repo.save_correction(OperatorCorrection(
+            correction_id="CORR-ORIG", run_id="RUN-ORIG", relationship_id="REL-ORIG",
+            original_outcome="EXCEPTION", original_exception_type=None,
+            original_source_ids=["REC-1"], original_target_ids=[],
+            corrected_outcome="MATCHED", corrected_exception_type=None,
+            corrected_source_ids=["REC-1"], corrected_target_ids=["BANK-1"],
+            operator_reason="Manual fix", created_at="2025-01-01T00:00:00Z", generated_rule_id="RULE-TO-DEL"
+        ))
+        repo.save_rule(ReconciliationRule(
+            rule_id="RULE-TO-DEL", name="Rule to delete", description="Test",
+            source_counterparty_pattern="TestCP",
+            target_action="PREFER_CANDIDATE",
+            resulting_outcome="MATCHED", confidence=1.0, is_active=True, created_at="2025-01-01T00:00:00Z",
+            source_correction_id="CORR-ORIG"
+        ))
+
+
+        # Delete rule
+        deleted = repo.delete_rule("RULE-TO-DEL")
+        assert deleted is True
+
+        # Rule should be gone
+        assert repo.get_rule("RULE-TO-DEL") is None
+
+        # Originating run and correction must remain intact
+        assert repo.get_run("RUN-ORIG") is not None
+        assert repo.get_correction("CORR-ORIG") is not None
+        assert repo.get_correction("CORR-ORIG").generated_rule_id == "RULE-TO-DEL"
+
+    def test_delete_rule_not_found(self, repo):
+        assert repo.delete_rule("NON_EXISTENT_RULE") is False
+
+    def test_rerun_deletion_isolation(self, repo):
+        repo.create_run(run_id="RUN-PARENT", status="COMPLETED")
+        repo.create_run(run_id="RUN-PARENT-RERUN-001", status="COMPLETED")
+
+        # Deleting rerun does not delete parent
+        assert repo.delete_run("RUN-PARENT-RERUN-001") is True
+        assert repo.get_run("RUN-PARENT-RERUN-001") is None
+        assert repo.get_run("RUN-PARENT") is not None
+
+        # Recreate rerun and delete parent -> rerun remains intact
+        repo.create_run(run_id="RUN-PARENT-RERUN-002", status="COMPLETED")
+        assert repo.delete_run("RUN-PARENT") is True
+        assert repo.get_run("RUN-PARENT") is None
+        assert repo.get_run("RUN-PARENT-RERUN-002") is not None
+
