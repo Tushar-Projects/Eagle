@@ -13,6 +13,8 @@ class MockVisionProvider:
         self,
         image_bytes: bytes,
         filename: str = "document.png",
+        mime_type: str = "image/png",
+        **kwargs,
     ) -> DocumentExtractionResult:
         """Extract transactions deterministically from image bytes."""
         if self._preset_transactions is not None:
@@ -59,7 +61,9 @@ class MockVisionProvider:
         self,
         image_bytes: bytes,
         filename: str = "document.png",
+        mime_type: str = "image/png",
+        **kwargs,
     ) -> DocumentExtractionResult:
         """Synchronous wrapper."""
         import asyncio
-        return asyncio.run(self.extract_transactions_async(image_bytes, filename))
+        return asyncio.run(self.extract_transactions_async(image_bytes, filename, mime_type, **kwargs))
