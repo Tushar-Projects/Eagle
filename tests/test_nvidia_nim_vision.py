@@ -48,7 +48,8 @@ ORBIT_MOCK_PAYLOAD = {
                     {
                         "transactions": [
                             {
-                                "raw_reference": "SRC-ORBIT-001",
+                                "record_id": "SRC-ORBIT-001",
+                                "reference": "ORBIT-2026-001",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "18500",
@@ -59,7 +60,8 @@ ORBIT_MOCK_PAYLOAD = {
                                 "confidence": 0.98,
                             },
                             {
-                                "raw_reference": "SRC-ORBIT-002",
+                                "record_id": "SRC-ORBIT-002",
+                                "reference": "ORBIT-2026-002",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "7500",
@@ -70,7 +72,8 @@ ORBIT_MOCK_PAYLOAD = {
                                 "confidence": 0.95,
                             },
                             {
-                                "raw_reference": "BANK-ORBIT-01",
+                                "record_id": "BANK-ORBIT-01",
+                                "reference": "ORBIT-2026-001",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "11000",
@@ -81,7 +84,8 @@ ORBIT_MOCK_PAYLOAD = {
                                 "confidence": 0.96,
                             },
                             {
-                                "raw_reference": "BANK-ORBIT-02",
+                                "record_id": "BANK-ORBIT-02",
+                                "reference": "ORBIT-2026-001",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "7500",
@@ -92,7 +96,8 @@ ORBIT_MOCK_PAYLOAD = {
                                 "confidence": 0.94,
                             },
                             {
-                                "raw_reference": "BANK-DECOY-01",
+                                "record_id": "BANK-DECOY-01",
+                                "reference": "ORBIT-2026-001",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "18500",
@@ -103,7 +108,8 @@ ORBIT_MOCK_PAYLOAD = {
                                 "confidence": 0.92,
                             },
                             {
-                                "raw_reference": "BANK-NOVA",
+                                "record_id": "BANK-NOVA",
+                                "reference": "ORBIT-2026-002",
                                 "transaction_date": "2026-09-04",
                                 "settlement_date": "2026-09-04",
                                 "amount": "7500",
@@ -187,7 +193,17 @@ def test_nvidia_nim_exact_visible_id_and_cell_preservation():
             "BANK-DECOY-01",
             "BANK-NOVA",
         ]
-        assert [t.raw_reference for t in txns] == expected_ids
+        assert [t.record_id for t in txns] == expected_ids
+
+        expected_references = [
+            "ORBIT-2026-001",
+            "ORBIT-2026-002",
+            "ORBIT-2026-001",
+            "ORBIT-2026-001",
+            "ORBIT-2026-001",
+            "ORBIT-2026-002",
+        ]
+        assert [t.raw_reference for t in txns] == expected_references
 
         expected_amounts = ["18500", "7500", "11000", "7500", "18500", "7500"]
         assert [t.amount for t in txns] == expected_amounts
@@ -391,14 +407,15 @@ def test_end_to_end_nvidia_nim_vision_extraction_to_canonical_records():
 def test_diagnostic_id_lifecycle_tracing():
     """Diagnostic test tracing exact stage where source record ID is transformed.
     
-    Stage 1: Raw Model Response contains 'raw_reference': 'SRC-ORBIT-001'
-    Stage 2: DocumentExtractionResult contains raw_transactions[0].raw_reference = 'SRC-ORBIT-001'
+    Stage 1: Raw Model Response contains 'record_id': 'SRC-ORBIT-001', 'reference': 'ORBIT-2026-001'
+    Stage 2: DocumentExtractionResult contains raw_transactions[0].record_id = 'SRC-ORBIT-001'
     Stage 3: assemble_canonical_record() preserves 'SRC-ORBIT-001' as record_id and transaction_id
     """
     raw_response_content = json.dumps({
         "transactions": [
             {
-                "raw_reference": "SRC-ORBIT-001",
+                "record_id": "SRC-ORBIT-001",
+                "reference": "ORBIT-2026-001",
                 "transaction_date": "2026-09-04",
                 "amount": "18500",
                 "currency": "INR",
@@ -413,7 +430,8 @@ def test_diagnostic_id_lifecycle_tracing():
     extraction_result = parse_vision_json_response(raw_response_content, filename="test_doc.png")
     assert len(extraction_result.raw_transactions) == 1
     raw_tx = extraction_result.raw_transactions[0]
-    assert raw_tx.raw_reference == "SRC-ORBIT-001"
+    assert raw_tx.record_id == "SRC-ORBIT-001"
+    assert raw_tx.raw_reference == "ORBIT-2026-001"
 
     # Stage 2 -> Stage 3: assemble_canonical_record preserves exact visible ID
     canonical = assemble_canonical_record(raw_tx, source_type="GATEWAY", document_id="test_doc.png", row_index=1)
@@ -428,7 +446,8 @@ def test_vision_reconciliation_end_to_end_matching():
     from eagle.reconciliation.engine import reconcile
 
     gtw_raw = RawExtractedTransaction(
-        raw_reference="SRC-ORBIT-001",
+        record_id="SRC-ORBIT-001",
+        raw_reference="ORBIT-2026-001",
         transaction_date="2026-09-04",
         amount="18500",
         currency="INR",
@@ -436,7 +455,8 @@ def test_vision_reconciliation_end_to_end_matching():
         narration="ORBIT-2026-001",
     )
     bnk_raw = RawExtractedTransaction(
-        raw_reference="BANK-ORBIT-01",
+        record_id="BANK-ORBIT-01",
+        raw_reference="ORBIT-2026-001",
         transaction_date="2026-09-04",
         amount="18500",
         currency="INR",
@@ -454,6 +474,450 @@ def test_vision_reconciliation_end_to_end_matching():
     assert rel.target_record_ids == ["BANK-ORBIT-01"]
     assert rel.outcome.value == "MATCHED"
     assert rel.reconciled_amount == Decimal("18500")
+
+
+# -------------------------------------------------------------------------
+# L. Identity & Reference Separation Regression Tests (Tests 1 - 8)
+# -------------------------------------------------------------------------
+
+def test_regression_test1_distinct_record_id_and_reference_canonicalization():
+    """TEST 1: Verify 4 Bank records sharing reference all survive canonicalization with distinct record_ids."""
+    raw_txns = [
+        RawExtractedTransaction(
+            record_id="BANK-ORBIT-01",
+            raw_reference="ORBIT-2026-001",
+            transaction_date="2026-09-04",
+            amount="11000",
+            currency="INR",
+            counterparty="Merchant-Orbit",
+        ),
+        RawExtractedTransaction(
+            record_id="BANK-ORBIT-02",
+            raw_reference="ORBIT-2026-001",
+            transaction_date="2026-09-04",
+            amount="7500",
+            currency="INR",
+            counterparty="Merchant-Orbit",
+        ),
+        RawExtractedTransaction(
+            record_id="BANK-DECOY-01",
+            raw_reference="ORBIT-2026-001",
+            transaction_date="2026-09-04",
+            amount="18500",
+            currency="INR",
+            counterparty="Wrong-Merchant",
+        ),
+        RawExtractedTransaction(
+            record_id="BANK-NOVA",
+            raw_reference="ORBIT-2026-002",
+            transaction_date="2026-09-04",
+            amount="7500",
+            currency="INR",
+            counterparty="Merchant-Nova",
+        ),
+    ]
+
+    canonical_records = [
+        assemble_canonical_record(raw, source_type="BANK", document_id="bank.png", row_index=i)
+        for i, raw in enumerate(raw_txns, start=1)
+    ]
+
+    assert len(canonical_records) == 4
+    assert [r.record_id for r in canonical_records] == [
+        "BANK-ORBIT-01",
+        "BANK-ORBIT-02",
+        "BANK-DECOY-01",
+        "BANK-NOVA",
+    ]
+    assert [r.source_reference for r in canonical_records] == [
+        "ORBIT-2026-001",
+        "ORBIT-2026-001",
+        "ORBIT-2026-001",
+        "ORBIT-2026-002",
+    ]
+
+
+def test_regression_test2_vision_extraction_parsing_separate_fields():
+    """TEST 2: Verify parse_vision_json_response maps record_id and reference separately."""
+    from eagle.extraction._nvidia_nim import parse_vision_json_response
+
+    payload_json = json.dumps({
+        "transactions": [
+            {
+                "record_id": "BANK-ORBIT-01",
+                "reference": "ORBIT-2026-001",
+                "transaction_date": "2026-09-04",
+                "amount": "11000",
+                "currency": "INR",
+                "counterparty": "Merchant-Orbit",
+            },
+            {
+                "record_id": "BANK-ORBIT-02",
+                "reference": "ORBIT-2026-001",
+                "transaction_date": "2026-09-04",
+                "amount": "7500",
+                "currency": "INR",
+                "counterparty": "Merchant-Orbit",
+            },
+            {
+                "record_id": "BANK-DECOY-01",
+                "reference": "ORBIT-2026-001",
+                "transaction_date": "2026-09-04",
+                "amount": "18500",
+                "currency": "INR",
+                "counterparty": "Wrong-Merchant",
+            },
+            {
+                "record_id": "BANK-NOVA",
+                "reference": "ORBIT-2026-002",
+                "transaction_date": "2026-09-04",
+                "amount": "7500",
+                "currency": "INR",
+                "counterparty": "Merchant-Nova",
+            },
+        ]
+    })
+
+    result = parse_vision_json_response(payload_json, filename="test_bank.png")
+    assert len(result.raw_transactions) == 4
+
+    txns = result.raw_transactions
+    assert [t.record_id for t in txns] == [
+        "BANK-ORBIT-01",
+        "BANK-ORBIT-02",
+        "BANK-DECOY-01",
+        "BANK-NOVA",
+    ]
+    assert [t.raw_reference for t in txns] == [
+        "ORBIT-2026-001",
+        "ORBIT-2026-001",
+        "ORBIT-2026-001",
+        "ORBIT-2026-002",
+    ]
+
+
+def test_regression_test3_full_mocked_vision_path_preserves_all_six_orbit_records():
+    """TEST 3: Verify all 6 Orbit records (2 Gateway + 4 Bank) survive extraction through VisionExtractor."""
+    gtw_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "transactions": [
+                            {
+                                "record_id": "SRC-ORBIT-001",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "18500",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Orbit",
+                            },
+                            {
+                                "record_id": "SRC-ORBIT-002",
+                                "reference": "ORBIT-2026-002",
+                                "transaction_date": "2026-09-04",
+                                "amount": "7500",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Nova",
+                            },
+                        ]
+                    })
+                }
+            }
+        ]
+    }
+
+    bnk_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "transactions": [
+                            {
+                                "record_id": "BANK-ORBIT-01",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "11000",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Orbit",
+                            },
+                            {
+                                "record_id": "BANK-ORBIT-02",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "7500",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Orbit",
+                            },
+                            {
+                                "record_id": "BANK-DECOY-01",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "18500",
+                                "currency": "INR",
+                                "counterparty": "Wrong-Merchant",
+                            },
+                            {
+                                "record_id": "BANK-NOVA",
+                                "reference": "ORBIT-2026-002",
+                                "transaction_date": "2026-09-04",
+                                "amount": "7500",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Nova",
+                            },
+                        ]
+                    })
+                }
+            }
+        ]
+    }
+
+    extractor = VisionExtractor(provider_type="nvidia_nim", api_key="test-key")
+    dummy_bytes = create_dummy_png_bytes()
+
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_post.side_effect = [
+            httpx.Response(200, json=gtw_payload, request=httpx.Request("POST", "http://test")),
+            httpx.Response(200, json=bnk_payload, request=httpx.Request("POST", "http://test")),
+        ]
+
+        gtw_records = asyncio.run(extractor.extract_async(dummy_bytes, source_type="GATEWAY", filename="gtw.png"))
+        bnk_records = asyncio.run(extractor.extract_async(dummy_bytes, source_type="BANK", filename="bnk.png"))
+
+        assert len(gtw_records) == 2
+        assert [r.record_id for r in gtw_records] == ["SRC-ORBIT-001", "SRC-ORBIT-002"]
+
+        assert len(bnk_records) == 4
+        assert [r.record_id for r in bnk_records] == ["BANK-ORBIT-01", "BANK-ORBIT-02", "BANK-DECOY-01", "BANK-NOVA"]
+
+        all_records = gtw_records + bnk_records
+        assert len(all_records) == 6
+
+
+def test_regression_test4_shared_reference_does_not_cause_deduplication():
+    """TEST 4: Explicitly assert BANK-ORBIT-01, BANK-ORBIT-02, BANK-DECOY-01 remain present despite sharing reference."""
+    bnk_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "transactions": [
+                            {
+                                "record_id": "BANK-ORBIT-01",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "11000",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Orbit",
+                            },
+                            {
+                                "record_id": "BANK-ORBIT-02",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "7500",
+                                "currency": "INR",
+                                "counterparty": "Merchant-Orbit",
+                            },
+                            {
+                                "record_id": "BANK-DECOY-01",
+                                "reference": "ORBIT-2026-001",
+                                "transaction_date": "2026-09-04",
+                                "amount": "18500",
+                                "currency": "INR",
+                                "counterparty": "Wrong-Merchant",
+                            },
+                        ]
+                    })
+                }
+            }
+        ]
+    }
+
+    extractor = VisionExtractor(provider_type="nvidia_nim", api_key="test-key")
+    dummy_bytes = create_dummy_png_bytes()
+
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_post.return_value = httpx.Response(200, json=bnk_payload, request=httpx.Request("POST", "http://test"))
+        bnk_records = asyncio.run(extractor.extract_async(dummy_bytes, source_type="BANK", filename="bnk.png"))
+
+        assert len(bnk_records) == 3
+        assert [r.record_id for r in bnk_records] == ["BANK-ORBIT-01", "BANK-ORBIT-02", "BANK-DECOY-01"]
+        assert all(r.source_reference == "ORBIT-2026-001" for r in bnk_records)
+
+
+def test_regression_test5_missing_record_id_fallback():
+    """TEST 5: If record_id is absent, fall back to deterministic DOC-* ID while preserving reference."""
+    raw = RawExtractedTransaction(
+        record_id=None,
+        raw_reference="ORBIT-2026-001",
+        transaction_date="2026-09-04",
+        amount="5000",
+        currency="INR",
+        counterparty="Merchant-Orbit",
+    )
+
+    rec = assemble_canonical_record(raw, source_type="BANK", document_id="bank_stmt.png", row_index=3)
+    assert rec.record_id.startswith("DOC-BNK-")
+    assert rec.record_id != "ORBIT-2026-001"
+    assert rec.transaction_id == rec.record_id
+    assert rec.source_reference == "ORBIT-2026-001"
+
+
+def test_regression_test6_native_csv_regression_isolation():
+    """TEST 6: Native CSV records continue to parse directly into CanonicalRecords without vision/network."""
+    csv_data = """payment_id,merchant_txn_ref,amount,currency,created_at,merchant_name
+SRC-001,REF-001,1500.00,INR,2026-09-04,Test Merchant
+SRC-002,REF-002,2500.00,INR,2026-09-04,Test Merchant 2
+"""
+    with patch("httpx.AsyncClient.post") as mock_post:
+        records = extract_csv(csv_data, source_type="GATEWAY")
+        assert len(records) == 2
+        assert records[0].record_id == "SRC-001"
+        assert records[0].source_reference == "REF-001"
+        assert records[1].record_id == "SRC-002"
+        assert records[1].source_reference == "REF-002"
+        assert mock_post.call_count == 0
+
+
+def test_regression_test7_orbit_dataset_end_to_end_reconciliation():
+    """TEST 7 / Section 10: 2 Gateway + 4 Bank records = 6 records reach reconciliation, Nova matches at ₹7,500."""
+    from eagle.reconciliation.engine import reconcile
+
+    # Gateway records
+    gtw_01 = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="SRC-ORBIT-001",
+            raw_reference="ORBIT-2026-001",
+            amount="18500",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Merchant-Orbit",
+        ),
+        source_type="GATEWAY",
+        document_id="gtw.png",
+        row_index=1,
+    )
+    gtw_02 = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="SRC-ORBIT-002",
+            raw_reference="ORBIT-2026-002",
+            amount="7500",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Merchant-Nova",
+        ),
+        source_type="GATEWAY",
+        document_id="gtw.png",
+        row_index=2,
+    )
+
+    # Bank records
+    bnk_01 = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="BANK-ORBIT-01",
+            raw_reference="ORBIT-2026-001",
+            amount="11000",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Merchant-Orbit",
+        ),
+        source_type="BANK",
+        document_id="bnk.png",
+        row_index=1,
+    )
+    bnk_02 = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="BANK-ORBIT-02",
+            raw_reference="ORBIT-2026-001",
+            amount="7500",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Merchant-Orbit",
+        ),
+        source_type="BANK",
+        document_id="bnk.png",
+        row_index=2,
+    )
+    bnk_decoy = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="BANK-DECOY-01",
+            raw_reference="ORBIT-2026-001",
+            amount="18500",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Wrong-Merchant",
+        ),
+        source_type="BANK",
+        document_id="bnk.png",
+        row_index=3,
+    )
+    bnk_nova = assemble_canonical_record(
+        RawExtractedTransaction(
+            record_id="BANK-NOVA",
+            raw_reference="ORBIT-2026-002",
+            amount="7500",
+            currency="INR",
+            transaction_date="2026-09-04",
+            counterparty="Merchant-Nova",
+        ),
+        source_type="BANK",
+        document_id="bnk.png",
+        row_index=4,
+    )
+
+    gtw_records = [gtw_01, gtw_02]
+    bnk_records = [bnk_01, bnk_02, bnk_decoy, bnk_nova]
+
+    assert len(gtw_records) == 2
+    assert len(bnk_records) == 4
+
+    result = reconcile(gtw_records, bnk_records)
+    assert len(gtw_records) + len(bnk_records) == 6
+
+    # Verify Nova ₹7,500 match
+    nova_matches = [
+        r for r in result.results
+        if "SRC-ORBIT-002" in r.source_record_ids and "BANK-NOVA" in r.target_record_ids
+    ]
+    assert len(nova_matches) == 1
+    assert nova_matches[0].outcome.value == "MATCHED"
+    assert nova_matches[0].reconciled_amount == Decimal("7500")
+
+    # Ambiguous Orbit transactions are represented in candidate pools as designed
+    assert len(result.candidates) >= 1
+
+
+def test_regression_test8_json_robustness_with_leading_prose():
+    """TEST 8 / Section 11: Verify strip_fences and parse_vision_json_response handle introductory prose."""
+    from eagle.extraction._nvidia_nim import parse_vision_json_response, strip_fences
+
+    model_output = """Here is the extracted transaction data from the screenshot table:
+
+```json
+{
+  "transactions": [
+    {
+      "record_id": "BANK-ORBIT-01",
+      "reference": "ORBIT-2026-001",
+      "transaction_date": "2026-09-04",
+      "amount": "11000",
+      "currency": "INR",
+      "counterparty": "Merchant-Orbit"
+    }
+  ]
+}
+```
+
+Hope this helps!"""
+
+    stripped = strip_fences(model_output)
+    assert stripped.startswith("{")
+    assert stripped.endswith("}")
+
+    result = parse_vision_json_response(model_output, filename="prose_test.png")
+    assert len(result.raw_transactions) == 1
+    assert result.raw_transactions[0].record_id == "BANK-ORBIT-01"
+    assert result.raw_transactions[0].raw_reference == "ORBIT-2026-001"
 
 
 # -------------------------------------------------------------------------

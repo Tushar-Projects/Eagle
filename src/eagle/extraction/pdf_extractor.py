@@ -143,6 +143,7 @@ class PdfExtractor:
         narration = " ".join(tokens[1:]) if len(tokens) > 1 else (tokens[0] if tokens else "Digital PDF Transaction")
 
         return RawExtractedTransaction(
+            record_id=ref,
             raw_reference=ref,
             transaction_date=date_str,
             amount=amt_str,

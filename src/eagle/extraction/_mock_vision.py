@@ -23,7 +23,8 @@ class MockVisionProvider:
             # Default generic synthetic extraction fixture
             txns = [
                 RawExtractedTransaction(
-                    raw_reference="TXN-MOCK-001",
+                    record_id="TXN-MOCK-001",
+                    raw_reference="REF-MOCK-001",
                     transaction_date="2025-01-15",
                     settlement_date="2025-01-16",
                     amount="2500.00",
@@ -35,7 +36,8 @@ class MockVisionProvider:
                     confidence=0.95,
                 ),
                 RawExtractedTransaction(
-                    raw_reference="TXN-MOCK-002",
+                    record_id="TXN-MOCK-002",
+                    raw_reference="REF-MOCK-002",
                     transaction_date="2025-01-16",
                     settlement_date="2025-01-16",
                     amount="4750.50",

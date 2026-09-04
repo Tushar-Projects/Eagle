@@ -126,7 +126,8 @@ class ExtractorRouter:
             records = self.csv_extractor.extract(file_input, source_type=source_type)
             raws = [
                 RawExtractedTransaction(
-                    raw_reference=r.source_reference or r.record_id,
+                    record_id=r.record_id,
+                    raw_reference=r.source_reference,
                     transaction_date=r.transaction_date.isoformat(),
                     settlement_date=r.settlement_date.isoformat() if r.settlement_date else None,
                     amount=str(r.amount),
@@ -151,7 +152,8 @@ class ExtractorRouter:
             records = self.json_extractor.extract(file_input, source_type=source_type)
             raws = [
                 RawExtractedTransaction(
-                    raw_reference=r.source_reference or r.record_id,
+                    record_id=r.record_id,
+                    raw_reference=r.source_reference,
                     transaction_date=r.transaction_date.isoformat(),
                     settlement_date=r.settlement_date.isoformat() if r.settlement_date else None,
                     amount=str(r.amount),
