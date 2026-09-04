@@ -236,6 +236,16 @@ body {
   padding: 0.35rem 0.75rem;
 }
 
+.btn-danger {
+  background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(225, 29, 72, 0.35);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #be123c 0%, #9f1239 100%);
+}
+
 .btn-icon {
   background: transparent;
   border: none;
@@ -251,6 +261,27 @@ body {
   color: var(--text-primary);
   background: var(--bg-surface-elevated);
 }
+
+.btn-danger-outline {
+  color: #fb7185;
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: #f43f5e;
+  color: #fff;
+}
+
+.btn-icon-danger {
+  color: #fb7185;
+}
+
+.btn-icon-danger:hover {
+  color: #f43f5e !important;
+  background: rgba(244, 63, 94, 0.15) !important;
+}
+
 
 /* Main Content Area */
 .app-main {

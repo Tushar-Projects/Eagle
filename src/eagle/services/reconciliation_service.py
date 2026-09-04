@@ -661,3 +661,96 @@ class ReconciliationService:
             raise RuntimeError("Q&A agent is not initialized.")
         return await self.qa_agent.answer_question(req)
 
+    # -------------------------------------------------------------------------
+    # Deletion Operations
+    # -------------------------------------------------------------------------
+
+    def delete_run(self, run_id: str) -> dict:
+        """Delete a reconciliation run and its run-scoped operational data and RAG documents.
+
+        Performs:
+        1. Existence validation in SQLite.
+        2. Transactional deletion of run-owned records in SQLite repository.
+        3. Deletion of run-scoped ChromaDB documents.
+        
+        Returns a dict summarizing deletion status and any ChromaDB cleanup errors.
+        Raises ValueError if the run does not exist.
+        """
+        run = self.repository.get_run(run_id)
+        if not run:
+            raise ValueError(f"Reconciliation run '{run_id}' not found.")
+
+        # 1. Delete from SQLite repository (transactional)
+        db_deleted = self.repository.delete_run(run_id)
+
+        # 2. Clean up ChromaDB vector store
+        chroma_deleted = False
+        chroma_error = None
+        if self.vector_store:
+            try:
+                self.vector_store.delete_run(run_id)
+                chroma_deleted = True
+            except Exception as e:
+                logger.error("ChromaDB cleanup failed for run %s: %s", run_id, e)
+                chroma_error = str(e)
+
+        return {
+            "run_id": run_id,
+            "db_deleted": db_deleted,
+            "chroma_deleted": chroma_deleted,
+            "chroma_error": chroma_error,
+        }
+
+    def delete_rule(self, rule_id: str) -> dict:
+        """Delete a learned reconciliation rule and its global RAG vector document.
+
+        Performs:
+        1. Existence validation in SQLite.
+        2. Appends RULE_DELETED audit event in originating run if exists.
+        3. Transactional deletion of rule in SQLite repository.
+        4. Deletion of global rule ChromaDB document.
+
+        Preserves originating operator corrections and audit history.
+        Returns a dict summarizing deletion status and any ChromaDB cleanup errors.
+        Raises ValueError if the rule does not exist.
+        """
+        rule = self.repository.get_rule(rule_id)
+        if not rule:
+            raise ValueError(f"Learned rule '{rule_id}' not found.")
+
+        # 1. Log RULE_DELETED audit event in originating run if still present
+        if rule.source_correction_id:
+            corr = self.repository.get_correction(rule.source_correction_id)
+            if corr and self.repository.get_run(corr.run_id):
+                self.repository.save_audit_event(
+                    corr.run_id,
+                    "RULE_DELETED",
+                    {
+                        "rule_id": rule_id,
+                        "name": rule.name,
+                        "source_correction_id": rule.source_correction_id,
+                    },
+                )
+
+        # 2. Delete from SQLite repository (transactional)
+        db_deleted = self.repository.delete_rule(rule_id)
+
+        # 3. Clean up ChromaDB vector store
+        chroma_deleted = False
+        chroma_error = None
+        if self.vector_store:
+            try:
+                self.vector_store.delete_rule(rule_id)
+                chroma_deleted = True
+            except Exception as e:
+                logger.error("ChromaDB cleanup failed for rule %s: %s", rule_id, e)
+                chroma_error = str(e)
+
+        return {
+            "rule_id": rule_id,
+            "db_deleted": db_deleted,
+            "chroma_deleted": chroma_deleted,
+            "chroma_error": chroma_error,
+        }
+
+

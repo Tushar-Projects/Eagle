@@ -206,7 +206,30 @@ const API = {
     if (!res.ok) throw new Error(`Failed to fetch rule impact for ${runId}`);
     return await res.json();
   },
+
+  async deleteRun(runId) {
+    const res = await fetch(`/runs/${encodeURIComponent(runId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to delete run' }));
+      throw new Error(err.detail || `Failed to delete run ${runId}`);
+    }
+    return await res.json();
+  },
+
+  async deleteRule(ruleId) {
+    const res = await fetch(`/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to delete rule' }));
+      throw new Error(err.detail || `Failed to delete rule ${ruleId}`);
+    }
+    return await res.json();
+  },
 };
+
 
 
 
@@ -229,6 +252,7 @@ const state = {
   rules: [],
   ruleImpact: null,
   selectedExceptionForCorrection: null,
+  selectedRuleForDeletion: null,
   selectedGatewayFile: null,
   selectedBankFile: null,
 };
@@ -237,6 +261,17 @@ const state = {
 // ---------------------------------------------------------------------------
 // 3. UI Helpers & Formatting
 // ---------------------------------------------------------------------------
+function resetQaPanel() {
+  const qaSection = document.getElementById('qaAnswerSection');
+  const qaAnswerText = document.getElementById('qaAnswerText');
+  const qaSourcesList = document.getElementById('qaSourcesList');
+  const qaInput = document.getElementById('qaInput');
+  if (qaSection) qaSection.classList.add('hidden');
+  if (qaAnswerText) qaAnswerText.textContent = '';
+  if (qaSourcesList) qaSourcesList.innerHTML = '';
+  if (qaInput) qaInput.value = '';
+}
+
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   const toast = document.createElement('div');
@@ -248,6 +283,7 @@ function showToast(message, type = 'info') {
     toast.remove();
   }, 4000);
 }
+
 
 function formatCurrency(amountStr) {
   if (!amountStr && amountStr !== '0' && amountStr !== 0) return '₹0.00';
@@ -282,7 +318,13 @@ function renderHeaderStatus(provider) {
 
 function renderRunSelector() {
   const select = document.getElementById('runSelect');
+  const btnDeleteHeader = document.getElementById('btnDeleteRunHeader');
+  const btnDeleteActive = document.getElementById('btnDeleteCurrentRun');
   select.innerHTML = '';
+
+  const disabled = state.runs.length === 0 || !state.activeRunId;
+  if (btnDeleteHeader) btnDeleteHeader.disabled = disabled;
+  if (btnDeleteActive) btnDeleteActive.disabled = disabled;
 
   if (state.runs.length === 0) {
     const opt = document.createElement('option');
@@ -309,6 +351,8 @@ function renderActiveRunMeta() {
   const time = document.getElementById('displayRunTimestamp');
   const btnCsv = document.getElementById('btnExportCsv');
   const btnJson = document.getElementById('btnExportJson');
+  const btnDeleteHeader = document.getElementById('btnDeleteRunHeader');
+  const btnDeleteActive = document.getElementById('btnDeleteCurrentRun');
 
   if (!state.activeRun) {
     title.textContent = 'No Run Selected';
@@ -317,6 +361,8 @@ function renderActiveRunMeta() {
     time.textContent = '--';
     btnCsv.disabled = true;
     btnJson.disabled = true;
+    if (btnDeleteHeader) btnDeleteHeader.disabled = true;
+    if (btnDeleteActive) btnDeleteActive.disabled = true;
 
     const scopeBadge = document.getElementById('qaScopeBadge');
     if (scopeBadge) {
@@ -325,7 +371,6 @@ function renderActiveRunMeta() {
     return;
   }
 
-
   title.textContent = state.activeRun.run_id;
   badge.textContent = state.activeRun.status;
   badge.className = `run-status-badge badge-${state.activeRun.status.toLowerCase()}`;
@@ -333,7 +378,10 @@ function renderActiveRunMeta() {
 
   btnCsv.disabled = false;
   btnJson.disabled = false;
+  if (btnDeleteHeader) btnDeleteHeader.disabled = false;
+  if (btnDeleteActive) btnDeleteActive.disabled = false;
 }
+
 
 function renderKpis() {
   const m = state.metrics || {};
@@ -707,8 +755,10 @@ function renderRulesTable() {
           <button type="button" class="btn btn-sm ${r.is_active ? 'btn-secondary' : 'btn-primary'} btn-toggle-rule" data-rule-id="${r.rule_id}" data-active="${r.is_active}" title="${r.is_active ? 'Deactivate rule' : 'Activate rule'}">
             ${r.is_active ? 'Deactivate' : 'Activate'}
           </button>
+          <button type="button" class="btn btn-sm btn-danger btn-delete-rule" data-rule-id="${r.rule_id}" title="Delete rule">Delete</button>
         </div>
       </td>
+
     `;
     tbody.appendChild(tr);
   });
@@ -1367,6 +1417,14 @@ async function openRuleDetailModal(ruleId) {
     };
   }
 
+  const btnDeleteInDetail = document.getElementById('btnDeleteRuleInDetail');
+  if (btnDeleteInDetail) {
+    btnDeleteInDetail.onclick = () => {
+      closeRuleDetailModal();
+      openRuleDeleteModal(rule.rule_id);
+    };
+  }
+
   const modal = document.getElementById('ruleDetailModal');
   if (modal) modal.classList.remove('hidden');
 }
@@ -1375,6 +1433,176 @@ function closeRuleDetailModal() {
   const modal = document.getElementById('ruleDetailModal');
   if (modal) modal.classList.add('hidden');
 }
+
+// ---------------------------------------------------------------------------
+// Run & Rule Deletion Handlers
+// ---------------------------------------------------------------------------
+
+function openRunDeleteModal() {
+  if (!state.activeRunId) {
+    showToast('No run selected to delete.', 'info');
+    return;
+  }
+  const modal = document.getElementById('runDeleteModal');
+  const idEl = document.getElementById('deleteModalRunId');
+  const typeEl = document.getElementById('deleteModalRunType');
+  const statusEl = document.getElementById('deleteModalRunStatus');
+
+  const isRerun = state.activeRunId.includes('-RERUN-');
+  if (idEl) idEl.textContent = state.activeRunId;
+  if (typeEl) typeEl.textContent = isRerun ? 'RERUN (Child Run)' : 'Normal Run';
+  if (statusEl) {
+    statusEl.textContent = state.activeRun?.status || 'COMPLETED';
+    statusEl.className = `badge-pill ${state.activeRun?.status === 'COMPLETED' ? 'badge-pill-green' : 'badge-pill-amber'}`;
+  }
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeRunDeleteModal() {
+  const modal = document.getElementById('runDeleteModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function confirmDeleteRun() {
+  if (!state.activeRunId) return;
+  const runIdToDelete = state.activeRunId;
+  const btnConfirm = document.getElementById('btnConfirmDeleteRun');
+  if (btnConfirm) {
+    btnConfirm.disabled = true;
+    btnConfirm.textContent = 'Deleting...';
+  }
+
+  try {
+    const res = await API.deleteRun(runIdToDelete);
+    closeRunDeleteModal();
+    if (res.warning) {
+      showToast(res.warning, 'info');
+    } else {
+      showToast(`Run ${runIdToDelete} deleted successfully.`, 'success');
+    }
+
+    // Refresh runs from backend
+    const data = await API.getRuns();
+    state.runs = data.runs || [];
+    renderRunSelector();
+
+    if (state.runs.length > 0) {
+      await loadRunDetails(state.runs[0].run_id);
+    } else {
+      // Transition UI to clean empty state
+      state.activeRunId = null;
+      state.activeRun = null;
+      state.metrics = null;
+      state.results = [];
+      state.filteredResults = [];
+      state.exceptions = [];
+      state.filteredExceptions = [];
+      state.candidates = [];
+      state.auditLogs = [];
+      state.records = [];
+      state.corrections = [];
+      state.ruleImpact = null;
+      renderActiveRunMeta();
+      renderKpis();
+      applyResultsFilters();
+      applyExceptionFilters();
+      renderCandidateInspector();
+      renderAuditTimeline();
+      renderCorrectionsHistory();
+      renderRulesTable();
+      renderRuleImpact();
+      resetQaPanel();
+    }
+  } catch (err) {
+    console.error('Failed to delete run:', err);
+    showToast(`Delete run failed: ${err.message}`, 'error');
+  } finally {
+    if (btnConfirm) {
+      btnConfirm.disabled = false;
+      btnConfirm.textContent = 'Delete Run';
+    }
+  }
+}
+
+function openRuleDeleteModal(ruleId) {
+  const rule = (state.rules || []).find(r => r.rule_id === ruleId);
+  if (!rule) {
+    showToast(`Rule ${ruleId} not found.`, 'error');
+    return;
+  }
+
+  state.selectedRuleForDeletion = rule;
+
+  const modal = document.getElementById('ruleDeleteModal');
+  const idEl = document.getElementById('deleteModalRuleId');
+  const nameEl = document.getElementById('deleteModalRuleName');
+  const statusEl = document.getElementById('deleteModalRuleStatus');
+  const warningEl = document.getElementById('ruleDeleteActiveWarning');
+
+  if (idEl) idEl.textContent = rule.rule_id;
+  if (nameEl) nameEl.textContent = rule.name;
+  if (statusEl) {
+    statusEl.textContent = rule.is_active ? 'ACTIVE' : 'INACTIVE';
+    statusEl.className = `badge-pill ${rule.is_active ? 'badge-pill-green' : 'badge-pill-red'}`;
+  }
+  if (warningEl) {
+    if (rule.is_active) {
+      warningEl.classList.remove('hidden');
+    } else {
+      warningEl.classList.add('hidden');
+    }
+  }
+
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeRuleDeleteModal() {
+  const modal = document.getElementById('ruleDeleteModal');
+  if (modal) modal.classList.add('hidden');
+  state.selectedRuleForDeletion = null;
+}
+
+async function confirmDeleteRule() {
+  if (!state.selectedRuleForDeletion) return;
+  const rule = state.selectedRuleForDeletion;
+  const btnConfirm = document.getElementById('btnConfirmDeleteRule');
+  if (btnConfirm) {
+    btnConfirm.disabled = true;
+    btnConfirm.textContent = 'Deleting...';
+  }
+
+  try {
+    const res = await API.deleteRule(rule.rule_id);
+    closeRuleDeleteModal();
+    closeRuleDetailModal();
+    if (res.warning) {
+      showToast(res.warning, 'info');
+    } else {
+      showToast(`Rule ${rule.rule_id} deleted successfully.`, 'success');
+    }
+
+    // Refresh rules list
+    const rulesData = await API.getRules();
+    state.rules = rulesData.rules || [];
+    renderRulesTable();
+
+    // Refresh audit log if active run is open
+    if (state.activeRunId) {
+      const audit = await API.getAuditLogs(state.activeRunId).catch(() => []);
+      state.auditLogs = audit;
+      renderAuditTimeline();
+    }
+  } catch (err) {
+    console.error('Failed to delete rule:', err);
+    showToast(`Delete rule failed: ${err.message}`, 'error');
+  } finally {
+    if (btnConfirm) {
+      btnConfirm.disabled = false;
+      btnConfirm.textContent = 'Delete Rule';
+    }
+  }
+}
+
 
 
 
@@ -1700,7 +1928,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnCloseRuleDetail) btnCloseRuleDetail.addEventListener('click', closeRuleDetailModal);
   if (btnCloseRuleDetailBtn) btnCloseRuleDetailBtn.addEventListener('click', closeRuleDetailModal);
 
-  // 18. Event Delegation for dynamic buttons: [Correct], [Details], [View Rule], [Toggle Rule]
+  // 18. Run & Rule Deletion Modal Controls
+  const btnDeleteRunHeader = document.getElementById('btnDeleteRunHeader');
+  const btnDeleteCurrentRun = document.getElementById('btnDeleteCurrentRun');
+  const btnCloseRunDelete = document.getElementById('btnCloseRunDeleteModal');
+  const btnCancelDeleteRun = document.getElementById('btnCancelDeleteRun');
+  const btnConfirmDeleteRun = document.getElementById('btnConfirmDeleteRun');
+
+  if (btnDeleteRunHeader) btnDeleteRunHeader.addEventListener('click', openRunDeleteModal);
+  if (btnDeleteCurrentRun) btnDeleteCurrentRun.addEventListener('click', openRunDeleteModal);
+  if (btnCloseRunDelete) btnCloseRunDelete.addEventListener('click', closeRunDeleteModal);
+  if (btnCancelDeleteRun) btnCancelDeleteRun.addEventListener('click', closeRunDeleteModal);
+  if (btnConfirmDeleteRun) btnConfirmDeleteRun.addEventListener('click', confirmDeleteRun);
+
+  const btnCloseRuleDelete = document.getElementById('btnCloseRuleDeleteModal');
+  const btnCancelDeleteRule = document.getElementById('btnCancelDeleteRule');
+  const btnConfirmDeleteRule = document.getElementById('btnConfirmDeleteRule');
+
+  if (btnCloseRuleDelete) btnCloseRuleDelete.addEventListener('click', closeRuleDeleteModal);
+  if (btnCancelDeleteRule) btnCancelDeleteRule.addEventListener('click', closeRuleDeleteModal);
+  if (btnConfirmDeleteRule) btnConfirmDeleteRule.addEventListener('click', confirmDeleteRule);
+
+  // 19. Event Delegation for dynamic buttons: [Correct], [Details], [View Rule], [Toggle Rule], [Delete Rule]
   document.addEventListener('click', async e => {
     const correctBtn = e.target.closest('.btn-correct');
     if (correctBtn) {
@@ -1720,6 +1969,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (viewRuleBtn) {
       const ruleId = viewRuleBtn.dataset.ruleId;
       if (ruleId) openRuleDetailModal(ruleId);
+      return;
+    }
+
+    const deleteRuleBtn = e.target.closest('.btn-delete-rule');
+    if (deleteRuleBtn) {
+      const ruleId = deleteRuleBtn.dataset.ruleId;
+      if (ruleId) openRuleDeleteModal(ruleId);
       return;
     }
 
@@ -1758,6 +2014,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 });
+
 
 
 

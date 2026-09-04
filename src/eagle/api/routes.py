@@ -222,6 +222,42 @@ def get_run(
     return RunResponse.model_validate(run)
 
 
+@router.delete(
+    "/runs/{run_id}",
+    tags=["Runs"],
+)
+def delete_run(
+    run_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Delete a historical reconciliation run, its persisted records, and RAG index."""
+    run = service.repository.get_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Reconciliation run '{run_id}' not found.",
+        )
+
+    result = service.delete_run(run_id)
+    if result.get("chroma_error"):
+        return {
+            "run_id": run_id,
+            "status": "PARTIALLY_DELETED",
+            "db_deleted": result["db_deleted"],
+            "chroma_deleted": False,
+            "warning": f"Run database records deleted, but ChromaDB index cleanup failed: {result['chroma_error']}",
+        }
+
+    return {
+        "run_id": run_id,
+        "status": "DELETED",
+        "db_deleted": True,
+        "chroma_deleted": True,
+        "message": f"Run '{run_id}' and associated knowledge base documents successfully deleted.",
+    }
+
+
+
 @router.get("/runs/{run_id}/records", tags=["Runs"])
 def get_run_records(
     run_id: str,
@@ -1200,6 +1236,42 @@ def create_rule(
             )
 
     return RuleResponse.model_validate(rule.model_dump())
+
+
+@router.delete(
+    "/rules/{rule_id}",
+    tags=["Rules"],
+)
+def delete_rule(
+    rule_id: str,
+    service: ReconciliationService = Depends(get_service),
+):
+    """Delete a learned reconciliation rule and its global RAG vector document."""
+    rule = service.repository.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rule '{rule_id}' not found.",
+        )
+
+    result = service.delete_rule(rule_id)
+    if result.get("chroma_error"):
+        return {
+            "rule_id": rule_id,
+            "status": "PARTIALLY_DELETED",
+            "db_deleted": result["db_deleted"],
+            "chroma_deleted": False,
+            "warning": f"Rule database record deleted, but ChromaDB index cleanup failed: {result['chroma_error']}",
+        }
+
+    return {
+        "rule_id": rule_id,
+        "status": "DELETED",
+        "db_deleted": True,
+        "chroma_deleted": True,
+        "message": f"Rule '{rule_id}' and associated vector document successfully deleted.",
+    }
+
 
 
 

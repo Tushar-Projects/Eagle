@@ -1016,5 +1016,138 @@ def test_vector_store_knowledge_scope_semantics(repo, sample_data):
     assert "GLOBAL" in scopes
 
 
+def test_rag_cleanup_after_run_and_rule_deletion(repo):
+    """Verify Part 5 RAG/QA safety:
+    Create Run A, Run B, Global Rule R.
+    Index all into ChromaDB.
+    Delete Run A -> Run A's RAG docs are removed; Run B and Rule R remain retrievable.
+    Delete Rule R -> Rule R is removed; Run B remains retrievable.
+    """
+    import chromadb
+    from eagle.rag.vector_store import COLLECTION_NAME
+    from eagle.services.reconciliation_service import ReconciliationService
+    from eagle.core.config import Settings
+    from eagle.agents._mock import MockProvider
+
+    run_a = "RUN-RAG-CLEANUP-A"
+    run_b = "RUN-RAG-CLEANUP-B"
+
+    # 1. Setup Run A
+    repo.create_run(run_id=run_a, status="COMPLETED", source_count=1, target_count=1, total_records=2)
+    rec_a_s = CanonicalRecord(
+        record_id="SRC-A1", transaction_id="TX-A1", source="GATEWAY", source_reference="REF-A1",
+        amount=Decimal("1500.00"), currency="INR", transaction_date=date(2026, 9, 1), settlement_date=date(2026, 9, 1),
+        counterparty="AlphaCorp", status="COMPLETED", transaction_type="PAYMENT"
+    )
+    rec_a_t = CanonicalRecord(
+        record_id="BNK-A1", transaction_id="TX-A2", source="BANK", source_reference="REF-A1",
+        amount=Decimal("1500.00"), currency="INR", transaction_date=date(2026, 9, 1), settlement_date=date(2026, 9, 1),
+        counterparty="AlphaCorp", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    repo.save_records(run_a, [rec_a_s, rec_a_t])
+    res_a = ReconciliationResult(
+        relationship_id="REL-A1", relationship_type=RelationshipType.ONE_TO_ONE,
+        source_record_ids=["SRC-A1"], target_record_ids=["BNK-A1"],
+        outcome=ReconciliationOutcome.MATCHED, reconciled_amount=Decimal("1500.00"),
+    )
+    repo.save_results(run_a, [res_a])
+    repo.save_audit_event(run_a, "RUN_COMPLETED", {"matched": 1})
+
+    # 2. Setup Run B
+    repo.create_run(run_id=run_b, status="COMPLETED", source_count=1, target_count=1, total_records=2)
+    rec_b_s = CanonicalRecord(
+        record_id="SRC-B1", transaction_id="TX-B1", source="GATEWAY", source_reference="REF-B1",
+        amount=Decimal("2500.00"), currency="INR", transaction_date=date(2026, 9, 2), settlement_date=date(2026, 9, 2),
+        counterparty="BetaCorp", status="COMPLETED", transaction_type="PAYMENT"
+    )
+    rec_b_t = CanonicalRecord(
+        record_id="BNK-B1", transaction_id="TX-B2", source="BANK", source_reference="REF-B1",
+        amount=Decimal("2500.00"), currency="INR", transaction_date=date(2026, 9, 2), settlement_date=date(2026, 9, 2),
+        counterparty="BetaCorp", status="COMPLETED", transaction_type="SETTLEMENT"
+    )
+    repo.save_records(run_b, [rec_b_s, rec_b_t])
+    res_b = ReconciliationResult(
+        relationship_id="REL-B1", relationship_type=RelationshipType.ONE_TO_ONE,
+        source_record_ids=["SRC-B1"], target_record_ids=["BNK-B1"],
+        outcome=ReconciliationOutcome.MATCHED, reconciled_amount=Decimal("2500.00"),
+    )
+    repo.save_results(run_b, [res_b])
+    repo.save_audit_event(run_b, "RUN_COMPLETED", {"matched": 1})
+
+    # 3. Setup Global Rule R
+    rule_id = "RULE-CLEANUP-GLOBAL-01"
+    rule_r = ReconciliationRule(
+        rule_id=rule_id,
+        name="Global Test Rule",
+        description="Auto-match rule for testing",
+        source_counterparty_pattern="AlphaCorp",
+        resulting_outcome="MATCHED",
+        confidence=1.0,
+        is_active=True,
+        created_at="2026-09-01T00:00:00Z",
+    )
+    repo.save_rule(rule_r)
+
+    # 4. Initialize Vector Store & Service
+    client = chromadb.EphemeralClient()
+    try:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
+
+    vs = EagleVectorStore(chroma_path=":memory:", client=client)
+    vs.index_run(repo, run_a)
+    vs.index_run(repo, run_b)
+
+    service = ReconciliationService(
+        repository=repo,
+        provider=MockProvider(),
+        settings=Settings(DATABASE_PATH=":memory:", AI_PROVIDER="mock"),
+    )
+    service.vector_store = vs
+
+    # Check baseline retrievability
+    docs_a = vs.search("AlphaCorp", run_id=run_a)
+    assert any(d.id.startswith(f"result:{run_a}") or d.id == f"run:{run_a}" for d in docs_a)
+
+    docs_b = vs.search("BetaCorp", run_id=run_b)
+    assert any(d.id.startswith(f"result:{run_b}") or d.id == f"run:{run_b}" for d in docs_b)
+
+    docs_rule = vs.search("Global Test Rule", knowledge_scope="GLOBAL")
+    assert any(d.id == f"rule:{rule_id}" for d in docs_rule)
+
+    # 5. Delete Run A
+    del_run_res = service.delete_run(run_a)
+    assert del_run_res["db_deleted"] is True
+    assert del_run_res["chroma_deleted"] is True
+
+    # Verify Run A RAG documents are no longer retrievable
+    docs_a_after = vs.search("AlphaCorp", run_id=run_a)
+    run_a_owned_docs = [d for d in docs_a_after if d.metadata.get("run_id") == run_a]
+    assert len(run_a_owned_docs) == 0, f"Run A docs still found in RAG: {run_a_owned_docs}"
+
+    # Verify Run B RAG documents are still retrievable
+    docs_b_after = vs.search("BetaCorp", run_id=run_b)
+    assert any(d.id.startswith(f"result:{run_b}") for d in docs_b_after)
+
+    # Verify Global Rule R is still retrievable
+    docs_rule_after_run_del = vs.search("Global Test Rule", knowledge_scope="GLOBAL")
+    assert any(d.id == f"rule:{rule_id}" for d in docs_rule_after_run_del)
+
+    # 6. Delete Rule R
+    del_rule_res = service.delete_rule(rule_id)
+    assert del_rule_res["db_deleted"] is True
+    assert del_rule_res["chroma_deleted"] is True
+
+    # Verify Rule R is no longer retrievable
+    docs_rule_after_rule_del = vs.search("Global Test Rule", knowledge_scope="GLOBAL")
+    assert not any(d.id == f"rule:{rule_id}" for d in docs_rule_after_rule_del)
+
+    # Verify Run B remains retrievable
+    docs_b_final = vs.search("BetaCorp", run_id=run_b)
+    assert any(d.id.startswith(f"result:{run_b}") for d in docs_b_final)
+
+
+
 
 

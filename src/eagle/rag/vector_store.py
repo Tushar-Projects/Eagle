@@ -249,8 +249,22 @@ class EagleVectorStore:
         return self.add_documents(docs)
 
     def delete_run(self, run_id: str) -> None:
-        """Delete all documents associated with a specific run."""
+        """Delete all RUN-scoped documents associated with a specific run."""
+        if self._collection.count() == 0:
+            return
         try:
             self._collection.delete(where={"run_id": run_id})
         except Exception as e:
-            logger.warning("Error deleting vector documents for run %s: %s", run_id, e)
+            logger.error("Error deleting vector documents for run %s: %s", run_id, e)
+            raise
+
+    def delete_rule(self, rule_id: str) -> None:
+        """Delete global vector store document for a learned rule."""
+        if self._collection.count() == 0:
+            return
+        try:
+            self._collection.delete(ids=[f"rule:{rule_id}"])
+        except Exception as e:
+            logger.error("Error deleting vector document for rule %s: %s", rule_id, e)
+            raise
+

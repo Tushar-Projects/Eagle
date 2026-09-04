@@ -410,8 +410,8 @@ class TestFastApiEndpoints:
         assert 'id="ruleDetailModal"' in html
 
         # Cache-busting version check
-        assert 'styles.css?v=20260903' in html
-        assert 'app.js?v=20260903' in html
+        assert 'styles.css?v=202609' in html
+        assert 'app.js?v=202609' in html
 
     def test_static_assets_contain_correction_and_rule_handlers(self, api_client):
         res_js = api_client.get("/static/app.js")
@@ -518,5 +518,107 @@ class TestFastApiEndpoints:
         # 8. Creation rejection for exact record ID
         res_create_bad = api_client.post("/rules", json=bad_id_payload)
         assert res_create_bad.status_code == 422
+
+    def test_delete_run_endpoint_success_and_isolation(self, api_client):
+        # Create Run 1
+        res1 = api_client.post(
+            "/runs/json",
+            json={
+                "source_records": [{"payment_id": "G-1", "amount": "100.00", "created_at": "2025-01-01"}],
+                "target_records": [{"bank_reference": "B-1", "settlement_amount": "100.00", "posting_date": "2025-01-01"}],
+            },
+        )
+        run1_id = res1.json()["run_id"]
+
+        # Create Run 2
+        res2 = api_client.post(
+            "/runs/json",
+            json={
+                "source_records": [{"payment_id": "G-2", "amount": "200.00", "created_at": "2025-01-01"}],
+                "target_records": [{"bank_reference": "B-2", "settlement_amount": "200.00", "posting_date": "2025-01-01"}],
+            },
+        )
+        run2_id = res2.json()["run_id"]
+
+        # Delete Run 1
+        del_res = api_client.delete(f"/runs/{run1_id}")
+        assert del_res.status_code == 200
+        del_data = del_res.json()
+        assert del_data["status"] == "DELETED"
+        assert del_data["run_id"] == run1_id
+
+        # Verify Run 1 is no longer found
+        assert api_client.get(f"/runs/{run1_id}").status_code == 404
+        assert api_client.get(f"/runs/{run1_id}/records").status_code == 404
+        assert api_client.get(f"/runs/{run1_id}/results").status_code == 404
+
+        # Repeated delete returns 404
+        assert api_client.delete(f"/runs/{run1_id}").status_code == 404
+
+        # Run 2 remains completely intact
+        res_run2 = api_client.get(f"/runs/{run2_id}")
+        assert res_run2.status_code == 200
+        assert res_run2.json()["run_id"] == run2_id
+
+    def test_delete_run_endpoint_404(self, api_client):
+        res = api_client.delete("/runs/NON-EXISTENT-RUN")
+        assert res.status_code == 404
+        assert "not found" in res.json()["detail"].lower()
+
+    def test_delete_rule_endpoint_success(self, api_client):
+        # Create a rule
+        rule_payload = {
+            "name": "Deletion Test Rule",
+            "source_counterparty_pattern": "TestCP",
+            "resulting_outcome": "MATCHED",
+            "target_action": "PREFER_CANDIDATE",
+        }
+        res_create = api_client.post("/rules", json=rule_payload)
+        assert res_create.status_code == 201
+        rule_id = res_create.json()["rule_id"]
+
+        # Delete rule
+        del_res = api_client.delete(f"/rules/{rule_id}")
+        assert del_res.status_code == 200
+        assert del_res.json()["status"] == "DELETED"
+        assert del_res.json()["rule_id"] == rule_id
+
+        # Verify rule is gone
+        assert api_client.get(f"/rules/{rule_id}").status_code == 404
+
+        # Repeated delete returns 404
+        assert api_client.delete(f"/rules/{rule_id}").status_code == 404
+
+    def test_delete_rule_endpoint_404(self, api_client):
+        res = api_client.delete("/rules/NON-EXISTENT-RULE")
+        assert res.status_code == 404
+        assert "not found" in res.json()["detail"].lower()
+
+    def test_delete_run_partial_chroma_failure_handling(self, api_client):
+        # Create a run
+        res = api_client.post(
+            "/runs/json",
+            json={
+                "source_records": [{"payment_id": "G-FAIL", "amount": "100.00", "created_at": "2025-01-01"}],
+                "target_records": [{"bank_reference": "B-FAIL", "settlement_amount": "100.00", "posting_date": "2025-01-01"}],
+            },
+        )
+        run_id = res.json()["run_id"]
+
+        # Simulate Chroma failure on active service instance
+        service = app.dependency_overrides[get_service]()
+        if service.vector_store:
+            def broken_delete_run(r_id):
+                raise RuntimeError("Chroma connection timed out")
+            service.vector_store.delete_run = broken_delete_run
+
+        del_res = api_client.delete(f"/runs/{run_id}")
+        assert del_res.status_code == 200
+        del_data = del_res.json()
+        assert del_data["status"] == "PARTIALLY_DELETED"
+        assert del_data["chroma_deleted"] is False
+        assert "ChromaDB index cleanup failed" in del_data["warning"]
+
+
 
 
